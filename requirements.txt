@@ -1,0 +1,30 @@
+# ==============================================
+# Python 패키지 의존성
+# ==============================================
+# 설치 명령: pip install -r requirements.txt
+
+# 환경 변수 관리
+python-dotenv==1.0.0
+
+# Modbus 통신
+pymodbus==3.5.4
+
+# 데이터베이스
+psycopg2-binary==2.9.9
+
+# GUI (PyQt6로 업그레이드)
+PyQt6==6.6.1
+pyqtgraph==0.13.3
+
+# 데이터 처리
+pandas==2.1.4
+numpy==1.26.2
+
+# 날짜/시간 처리
+python-dateutil==2.8.2
+
+# Excel 파일 생성 (데이터 내보내기용)
+openpyxl==3.1.2
+
+# 로깅
+colorlog==6.8.0
