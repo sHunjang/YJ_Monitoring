@@ -1,10 +1,18 @@
+# ==============================================
+# UI 위젯 모듈
+# ==============================================
 """
-UI 위젯 패키지
+GUI 위젯 모음
 
-사용자 정의 위젯 모음
+위젯:
+- SensorCard: 센서 데이터 카드
+- ChartWidget: 시계열 차트
 """
 
-from ui.widgets.box_status_widget import BoxStatusWidget
-from ui.widgets.power_meter_widget import PowerMeterWidget
+from .sensor_card import SensorCard
+from .chart_widget import ChartWidget
 
-__all__ = ['BoxStatusWidget', 'PowerMeterWidget']
+__all__ = [
+    'SensorCard',
+    'ChartWidget',
+]
