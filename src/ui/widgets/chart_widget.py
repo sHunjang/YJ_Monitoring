@@ -4,6 +4,8 @@
 """
 시계열 데이터 차트 위젯
 
+
+
 기능:
 - 시계열 데이터 시각화
 - 줌/팬 기능
@@ -16,6 +18,8 @@
 - 자동 시간 포맷 (HH:MM → MM-DD)
 """
 
+
+
 from datetime import datetime
 from typing import List, Dict
 from PyQt6.QtWidgets import (
@@ -23,10 +27,15 @@ from PyQt6.QtWidgets import (
     QPushButton, QComboBox, QButtonGroup, QRadioButton
 )
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QFont
 import pyqtgraph as pg
 from pyqtgraph import DateAxisItem
 
+
+
 from ui.theme import Theme
+
+
 
 
 class SmartDateAxisItem(DateAxisItem):
@@ -73,6 +82,8 @@ class SmartDateAxisItem(DateAxisItem):
         return strings
 
 
+
+
 class ChartWidget(QWidget):
     """개선된 차트 위젯"""
     
@@ -93,6 +104,14 @@ class ChartWidget(QWidget):
         self.title = title
         self.plot_lines = {}  # {device_id: PlotDataItem}
         self.current_time_range = 1  # 기본 1시간
+        
+        # ✅✅ 툴팁 고정 상태
+        self.tooltip_locked = False
+        self.locked_tooltip_text = ''
+        self.locked_tooltip_pos = (0, 0)
+        
+        # ✅✅ 사용자가 차트를 조작했는지 추적
+        self.user_interacted = False
         
         self.init_ui()
         
@@ -174,7 +193,21 @@ class ChartWidget(QWidget):
         # 축 텍스트 색상
         self.plot_widget.getAxis('bottom').setTextPen(Theme.TEXT_PRIMARY)
         self.plot_widget.getAxis('left').setTextPen(Theme.TEXT_PRIMARY)
+
+
+        # ✅✅ Y축 포맷 설정 (소수점 둘째 자리까지)
+        left_axis = self.plot_widget.getAxis('left')
+        left_axis.enableAutoSIPrefix(False)  # 자동 SI 접두사 비활성화
         
+        # Y축 틱 포맷 커스터마이징
+        def format_y_tick(values, scale, spacing):
+            """Y축 틱 레이블 포맷"""
+            return [f'{value:.2f}' for value in values]
+        
+        left_axis.tickStrings = format_y_tick
+        
+
+
         # 그리드 설정
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         
@@ -189,11 +222,27 @@ class ChartWidget(QWidget):
         # 마우스 인터랙션 활성화
         self.plot_widget.setMouseEnabled(x=True, y=True)
         
+        # ✅✅ 뷰 범위 변경 이벤트 (사용자가 줌/팬 했을 때)
+        self.plot_widget.sigRangeChanged.connect(self.on_range_changed)
+
+
         # 십자선 커서 추가
         self.v_line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen(Theme.PRIMARY, width=1, style=Qt.PenStyle.DashLine))
         self.h_line = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen(Theme.PRIMARY, width=1, style=Qt.PenStyle.DashLine))
         self.plot_widget.addItem(self.v_line, ignoreBounds=True)
         self.plot_widget.addItem(self.h_line, ignoreBounds=True)
+        
+        # ✅✅ 툴팁 텍스트 아이템 추가
+        self.tooltip = pg.TextItem(
+            text='',
+            anchor=(0, 1),  # 좌측 하단 기준
+            color=Theme.TEXT_PRIMARY,
+            fill=pg.mkBrush(Theme.BG_SECONDARY),
+            border=pg.mkPen(Theme.BORDER, width=2)
+        )
+        self.tooltip.setFont(QFont('Pretendard', 10))
+        self.plot_widget.addItem(self.tooltip)
+        self.tooltip.setVisible(False)
         
         # 마우스 이동 이벤트
         self.proxy = pg.SignalProxy(
@@ -201,6 +250,9 @@ class ChartWidget(QWidget):
             rateLimit=60,
             slot=self.on_mouse_moved
         )
+    
+        # ✅✅ 마우스 클릭 이벤트 (툴팁 고정)
+        self.plot_widget.scene().sigMouseClicked.connect(self.on_mouse_clicked)
         
         # 스타일시트
         self.plot_widget.setStyleSheet(f"""
@@ -279,29 +331,159 @@ class ChartWidget(QWidget):
     
     def on_refresh_clicked(self):
         """새로고침 버튼 클릭"""
+        # ✅✅ 새로고침 시 자동 추적 재활성화
+        self.user_interacted = False
+        
         # ✅ 현재 시간 기준으로 X축 재설정
         self.set_initial_x_range()
+        
         # 새로고침 시그널 발생
         self.refresh_requested.emit()
-    
+
+
+    def on_range_changed(self):
+        """✅✅ 뷰 범위 변경 시 (사용자가 줌/팬 했을 때)"""
+        self.user_interacted = True
+
+
+
+    def on_mouse_clicked(self, event):
+        """✅✅ 마우스 클릭 시 툴팁 고정/해제"""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.tooltip_locked = not self.tooltip_locked
+            
+            if self.tooltip_locked:
+                # 고정 상태: 현재 툴팁 저장
+                if not self.tooltip.isVisible():
+                    # 툴팁이 안 보이면 고정 안 함
+                    self.tooltip_locked = False
+                    return
+                
+                self.locked_tooltip_text = self.tooltip.toPlainText()
+                pos = self.tooltip.pos()
+                self.locked_tooltip_pos = (pos.x(), pos.y())
+                
+                # ✅ 툴팁 재생성 (테두리 색상 변경)
+                self.plot_widget.removeItem(self.tooltip)
+                self.tooltip = pg.TextItem(
+                    text=self.locked_tooltip_text,
+                    anchor=(0, 1),
+                    color=Theme.TEXT_PRIMARY,
+                    fill=pg.mkBrush(Theme.BG_SECONDARY),
+                    border=pg.mkPen(Theme.WARNING, width=3)  # 주황색 두꺼운 테두리
+                )
+                self.tooltip.setFont(QFont('Pretendard', 10))
+                self.plot_widget.addItem(self.tooltip)
+                self.tooltip.setPos(self.locked_tooltip_pos[0], self.locked_tooltip_pos[1])
+                self.tooltip.setVisible(True)
+            else:
+                # 해제 상태: 툴팁 재생성 (원래 테두리)
+                self.plot_widget.removeItem(self.tooltip)
+                self.tooltip = pg.TextItem(
+                    text='',
+                    anchor=(0, 1),
+                    color=Theme.TEXT_PRIMARY,
+                    fill=pg.mkBrush(Theme.BG_SECONDARY),
+                    border=pg.mkPen(Theme.BORDER, width=2)  # 원래 테두리
+                )
+                self.tooltip.setFont(QFont('Pretendard', 10))
+                self.plot_widget.addItem(self.tooltip)
+                self.tooltip.setVisible(False)
+
+
+
     def on_mouse_moved(self, evt):
         """마우스 이동 이벤트"""
+        # ✅✅ 툴팁이 고정되어 있으면 업데이트 안 함
+        if self.tooltip_locked:
+            # 고정된 툴팁 유지
+            self.tooltip.setText(self.locked_tooltip_text)
+            self.tooltip.setPos(self.locked_tooltip_pos[0], self.locked_tooltip_pos[1])
+            self.tooltip.setVisible(True)
+            return
+        
         pos = evt[0]
         
         if self.plot_widget.sceneBoundingRect().contains(pos):
             mouse_point = self.plot_widget.plotItem.vb.mapSceneToView(pos)
+            x = mouse_point.x()
+            y = mouse_point.y()
             
             # 십자선 업데이트
-            self.v_line.setPos(mouse_point.x())
-            self.h_line.setPos(mouse_point.y())
+            self.v_line.setPos(x)
+            self.h_line.setPos(y)
             
             # 커서 위치 정보 표시
             try:
-                time_str = datetime.fromtimestamp(mouse_point.x()).strftime('%Y-%m-%d %H:%M:%S')
-                value_str = f'{mouse_point.y():.2f}'
+                time_str = datetime.fromtimestamp(x).strftime('%Y-%m-%d %H:%M:%S')
+                value_str = f'{y:.2f}'
                 self.cursor_label.setText(f'시간: {time_str} | 값: {value_str}')
             except:
                 self.cursor_label.setText('')
+            
+            # ✅✅ 가장 가까운 데이터 포인트 찾기
+            closest_line_id = None
+            closest_line_name = None
+            closest_dist = float('inf')
+            closest_x = None
+            closest_y = None
+            
+            for line_id, line_item in self.plot_lines.items():
+                data = line_item.getData()
+                if data[0] is None or len(data[0]) == 0:
+                    continue
+                
+                x_data = data[0]
+                y_data = data[1]
+                
+                # 현재 x 위치에서 가장 가까운 인덱스 찾기
+                idx = None
+                min_x_dist = float('inf')
+                for i, xi in enumerate(x_data):
+                    dist = abs(xi - x)
+                    if dist < min_x_dist:
+                        min_x_dist = dist
+                        idx = i
+                
+                if idx is not None:
+                    xi = x_data[idx]
+                    yi = y_data[idx]
+                    
+                    # 유클리드 거리 계산 (시간은 정규화)
+                    view_range = self.plot_widget.viewRange()
+                    x_range = view_range[0][1] - view_range[0][0]
+                    y_range = view_range[1][1] - view_range[1][0]
+                    
+                    if x_range > 0 and y_range > 0:
+                        norm_x_dist = (xi - x) / x_range
+                        norm_y_dist = (yi - y) / y_range
+                        dist = (norm_x_dist ** 2 + norm_y_dist ** 2) ** 0.5
+                        
+                        if dist < closest_dist:
+                            closest_dist = dist
+                            closest_x = xi
+                            closest_y = yi
+                            closest_line_id = line_id
+                            closest_line_name = line_item.name()
+            
+            # ✅✅ 툴팁 업데이트
+            if closest_line_id is not None and closest_dist < 0.05:  # 임계값 (정규화된 거리)
+                # 타임스탬프를 시간 문자열로 변환
+                time_str = datetime.fromtimestamp(closest_x).strftime('%H:%M:%S')
+                
+                # Y값 포맷팅 (소수점 2자리)
+                value_str = f"{closest_y:.2f}"
+                
+                # 툴팁 텍스트
+                tooltip_text = f"{closest_line_name}\n{time_str}\n{value_str}"
+                
+                self.tooltip.setText(tooltip_text)
+                self.tooltip.setPos(closest_x, closest_y)
+                self.tooltip.setVisible(True)
+            else:
+                self.tooltip.setVisible(False)
+        else:
+            self.tooltip.setVisible(False)
     
     def add_line(
         self,
@@ -378,11 +560,28 @@ class ChartWidget(QWidget):
         # 정보 업데이트
         self.update_info()
         
-        # ✅ X축 범위를 최신 데이터 기준으로 설정
-        if timestamps:
+        # ✅✅ 사용자가 차트를 조작하지 않았을 때만 X/Y축 자동 조정
+        if not self.user_interacted and timestamps:
             latest_time = max(timestamps)
             time_range_seconds = self.current_time_range * 3600
             self.plot_widget.setXRange(latest_time - time_range_seconds, latest_time, padding=0.02)
+            
+            # ✅✅ Y축 자동 범위 조정
+            if values:
+                min_val = min(values)
+                max_val = max(values)
+                value_range = max_val - min_val
+                
+                # 값이 거의 동일하면 적절한 범위 설정
+                if value_range < 0.01:
+                    # 값 주변으로 ±0.5% 범위 설정
+                    center = (min_val + max_val) / 2
+                    padding = max(abs(center) * 0.005, 0.1)  # 최소 0.1
+                    self.plot_widget.setYRange(center - padding, center + padding, padding=0)
+                else:
+                    # 값이 변하면 자동 범위 (10% 패딩)
+                    padding_val = value_range * 0.1
+                    self.plot_widget.setYRange(min_val - padding_val, max_val + padding_val, padding=0)
     
     def update_line(self, device_id: str, data: List[Dict]):
         """
@@ -414,14 +613,33 @@ class ChartWidget(QWidget):
         # 라인 업데이트
         self.plot_lines[device_id].setData(timestamps, values)
         
-        # ✅ X축 범위를 최신 데이터 기준으로 설정
-        if timestamps:
+        # ✅✅ 사용자가 차트를 조작하지 않았을 때만 X/Y축 자동 조정
+        if not self.user_interacted and timestamps:
             latest_time = max(timestamps)
             time_range_seconds = self.current_time_range * 3600
             self.plot_widget.setXRange(latest_time - time_range_seconds, latest_time, padding=0.02)
+            
+            # ✅✅ Y축 자동 범위 조정
+            if values:
+                min_val = min(values)
+                max_val = max(values)
+                value_range = max_val - min_val
+                
+                # 값이 거의 동일하면 적절한 범위 설정
+                if value_range < 0.01:
+                    # 값 주변으로 ±0.5% 범위 설정
+                    center = (min_val + max_val) / 2
+                    padding = max(abs(center) * 0.005, 0.1)  # 최소 0.1
+                    self.plot_widget.setYRange(center - padding, center + padding, padding=0)
+                else:
+                    # 값이 변하면 자동 범위 (10% 패딩)
+                    padding_val = value_range * 0.1
+                    self.plot_widget.setYRange(min_val - padding_val, max_val + padding_val, padding=0)
         
         # 정보 업데이트
         self.update_info()
+
+
     
     def remove_line(self, device_id: str):
         """
@@ -459,6 +677,8 @@ class ChartWidget(QWidget):
     
     def auto_range(self):
         """자동 범위 조정"""
+        self.user_interacted = False
+        
         self.plot_widget.autoRange()
     
     def update_info(self):
@@ -479,6 +699,8 @@ class ChartWidget(QWidget):
                 f'라인: {line_count}개 | 데이터 포인트: {total_points:,}개 | '
                 f'시간 범위: {self.time_range_combo.currentText()}'
             )
+
+
 
 
 # ==============================================

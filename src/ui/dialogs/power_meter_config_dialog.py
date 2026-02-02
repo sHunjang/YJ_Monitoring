@@ -4,7 +4,9 @@
 """
 전력량계 Slave ID 및 설정 다이얼로그
 
+
 기능:
+- ID 설정 (수정 가능)
 - Slave ID 설정
 - IP/Port 설정
 - 활성화/비활성화
@@ -12,16 +14,19 @@
 - JSON 파일 저장
 """
 
+
 import json
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMessageBox, QCheckBox, QSpinBox
+    QHeaderView, QMessageBox, QCheckBox, QSpinBox, QLineEdit
 )
 from PyQt6.QtCore import Qt
 
+
 from ui.theme import Theme
+
 
 
 class PowerMeterConfigDialog(QDialog):
@@ -51,8 +56,8 @@ class PowerMeterConfigDialog(QDialog):
         
         # 설명
         desc = QLabel(
-            '전력량계의 Slave ID, IP 주소, 포트, 설명을 설정합니다.\n'
-            '셀을 더블클릭하여 수정할 수 있습니다.'
+            '전력량계의 ID, Slave ID, IP 주소, 포트, 설명을 설정합니다.\n'
+            '각 전력량계는 고유한 ID와 Slave ID를 가져야 합니다.'
         )
         desc.setFont(Theme.font(10))
         desc.setStyleSheet(f'color: {Theme.TEXT_SECONDARY}; padding: 5px;')
@@ -89,7 +94,7 @@ class PowerMeterConfigDialog(QDialog):
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels([
-            'ID', 'Slave ID', '이름', '활성화', '설명'
+            'ID (수정 가능)', 'Slave ID', '이름', '활성화', '설명'
         ])
         
         # 컬럼 너비 설정
@@ -100,7 +105,7 @@ class PowerMeterConfigDialog(QDialog):
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # 활성화
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)  # 설명
         
-        self.table.setColumnWidth(0, 80)  # ID
+        self.table.setColumnWidth(0, 150)  # ID
         self.table.setColumnWidth(1, 100)  # Slave ID
         
         layout.addWidget(self.table)
@@ -153,11 +158,23 @@ class PowerMeterConfigDialog(QDialog):
             self.table.setRowCount(len(meters))
             
             for row, meter in enumerate(meters):
-                # ID
-                id_item = QTableWidgetItem(meter['device_id'])
-                id_item.setFlags(id_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                id_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.table.setItem(row, 0, id_item)
+                # ✅✅ ID (LineEdit - 수정 가능)
+                id_edit = QLineEdit(meter['device_id'])
+                id_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                id_edit.setStyleSheet(f"""
+                    QLineEdit {{
+                        background-color: {Theme.BG_SECONDARY};
+                        border: 1px solid {Theme.BORDER};
+                        border-radius: 5px;
+                        padding: 5px;
+                        font-size: 12px;
+                        color: {Theme.TEXT_PRIMARY};
+                    }}
+                    QLineEdit:focus {{
+                        border: 2px solid {Theme.PRIMARY};
+                    }}
+                """)
+                self.table.setCellWidget(row, 0, id_edit)
                 
                 # Slave ID (SpinBox)
                 slave_id_spin = QSpinBox()
@@ -174,7 +191,7 @@ class PowerMeterConfigDialog(QDialog):
                         font-size: 12px;
                     }}
                     QSpinBox:focus {{
-                        border: 1px solid {Theme.PRIMARY};
+                        border: 2px solid {Theme.PRIMARY};
                     }}
                 """)
                 self.table.setCellWidget(row, 1, slave_id_spin)
@@ -203,11 +220,51 @@ class PowerMeterConfigDialog(QDialog):
             self.config_data['ip'] = self.info_table.item(0, 0).text()
             self.config_data['port'] = int(self.info_table.item(0, 1).text())
             
+            # ✅✅ ID 중복 검사 및 유효성 검사
+            ids_seen = set()
+            slave_ids_seen = set()
+            
             # 전력량계 목록 업데이트
             meters = []
             for row in range(self.table.rowCount()):
-                device_id = self.table.item(row, 0).text()
+                # ✅✅ ID 가져오기 (LineEdit에서)
+                id_edit = self.table.cellWidget(row, 0)
+                device_id = id_edit.text().strip()
+                
+                # ✅✅ ID 유효성 검사
+                if not device_id:
+                    QMessageBox.warning(
+                        self,
+                        '경고',
+                        f'{row + 1}번째 전력량계의 ID가 비어있습니다.'
+                    )
+                    return
+                
+                if device_id in ids_seen:
+                    QMessageBox.warning(
+                        self,
+                        '경고',
+                        f'중복된 ID가 있습니다: {device_id}\n각 전력량계는 고유한 ID를 가져야 합니다.'
+                    )
+                    return
+                
+                ids_seen.add(device_id)
+                
+                # Slave ID 가져오기
                 slave_id = self.table.cellWidget(row, 1).value()
+                
+                # ✅✅ Slave ID 중복 검사
+                if slave_id in slave_ids_seen:
+                    QMessageBox.warning(
+                        self,
+                        '경고',
+                        f'중복된 Slave ID가 있습니다: {slave_id}\n각 전력량계는 고유한 Slave ID를 가져야 합니다.'
+                    )
+                    return
+                
+                slave_ids_seen.add(slave_id)
+                
+                # 나머지 필드
                 name = self.table.item(row, 2).text()
                 enabled = self.table.cellWidget(row, 3).isChecked()
                 description = self.table.item(row, 4).text()
@@ -238,6 +295,7 @@ class PowerMeterConfigDialog(QDialog):
         
         except Exception as e:
             QMessageBox.critical(self, '오류', f'설정 저장 실패:\n{str(e)}')
+
 
 
 # ==============================================
