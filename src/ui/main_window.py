@@ -7,10 +7,13 @@
 기능:
 - 실시간 데이터 모니터링
 - 차트 표시
+- 로그 뷰어
 - 설정 관리
+- CSV 내보내기
 """
 
 import logging
+from datetime import datetime
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QTabWidget, QMessageBox,
@@ -22,7 +25,8 @@ from PyQt6.QtGui import QAction
 from ui.theme import Theme
 from ui.widgets.sensor_card import SensorCard
 from ui.widgets.chart_widget import ChartWidget
-from ui.dialogs import IPConfigDialog, PowerMeterConfigDialog
+from ui.widgets.log_viewer_widget import LogViewerWidget
+from ui.dialogs import IPConfigDialog, PowerMeterConfigDialog, CSVExportDialog
 from services.ui_data_service import UIDataService
 
 logger = logging.getLogger(__name__)
@@ -40,6 +44,9 @@ class MainWindow(QMainWindow):
         
         # 데이터 서비스
         self.data_service = UIDataService()
+        
+        # 마지막 로그 타임스탬프 추적
+        self.last_log_timestamps = {}   # {device_id: timestamp}
         
         # UI 초기화
         self.init_ui()
@@ -103,7 +110,11 @@ class MainWindow(QMainWindow):
         heatpump_tab = self.create_heatpump_tab()
         self.tabs.addTab(heatpump_tab, '🌡️ 히트펌프')
         
-        # 탭 3: 전력량계
+        # 탭 3: 지중배관
+        groundpipe_tab = self.create_groundpipe_tab()
+        self.tabs.addTab(groundpipe_tab, '🌊 지중배관')
+        
+        # 탭 4: 전력량계
         power_tab = self.create_power_tab()
         self.tabs.addTab(power_tab, '⚡ 전력량계')
         
@@ -119,6 +130,14 @@ class MainWindow(QMainWindow):
         # 파일 메뉴
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         file_menu = menubar.addMenu('파일')
+        
+        # CSV 내보내기
+        export_action = QAction('📥 CSV 내보내기', self)
+        export_action.setShortcut('Ctrl+E')
+        export_action.triggered.connect(self.open_csv_export)
+        file_menu.addAction(export_action)
+        
+        file_menu.addSeparator()
         
         # 종료
         exit_action = QAction('종료', self)
@@ -162,14 +181,17 @@ class MainWindow(QMainWindow):
         self.hp_summary_card = SensorCard('히트펌프', '0개', Theme.HEATPUMP_COLOR)
         summary_layout.addWidget(self.hp_summary_card)
         
+        self.gp_summary_card = SensorCard('지중배관', '0개', Theme.PIPE_COLOR)
+        summary_layout.addWidget(self.gp_summary_card)
+        
         self.power_summary_card = SensorCard('전력량계', '0개', Theme.POWER_COLOR)
         summary_layout.addWidget(self.power_summary_card)
         
         layout.addLayout(summary_layout)
         
-        # 차트
-        self.dashboard_chart = ChartWidget('시스템 개요')
-        layout.addWidget(self.dashboard_chart)
+        # 로그 뷰어
+        self.log_viewer = LogViewerWidget('실시간 센서 로그')
+        layout.addWidget(self.log_viewer)
         
         widget.setLayout(layout)
         return widget
@@ -195,7 +217,35 @@ class MainWindow(QMainWindow):
         
         # 차트
         self.heatpump_chart = ChartWidget('히트펌프 온도 추이')
+        self.heatpump_chart.set_labels(y_label='온도 (°C)')
         layout.addWidget(self.heatpump_chart)
+        
+        widget.setLayout(layout)
+        return widget
+    
+    def create_groundpipe_tab(self):
+        """지중배관 탭 생성"""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        
+        # 센서 카드
+        self.groundpipe_cards = []
+        cards_layout = QHBoxLayout()
+        
+        # 지중배관 장치 목록 가져오기
+        devices = self.data_service.get_all_groundpipe_devices()
+        
+        for device_id in devices[:4]:  # 최대 4개
+            card = SensorCard(device_id, '0.0°C', Theme.PIPE_COLOR)
+            self.groundpipe_cards.append(card)
+            cards_layout.addWidget(card)
+        
+        layout.addLayout(cards_layout)
+        
+        # 차트
+        self.groundpipe_chart = ChartWidget('지중배관 온도 추이')
+        self.groundpipe_chart.set_labels(y_label='온도 (°C)')
+        layout.addWidget(self.groundpipe_chart)
         
         widget.setLayout(layout)
         return widget
@@ -221,6 +271,7 @@ class MainWindow(QMainWindow):
         
         # 차트
         self.power_chart = ChartWidget('전력량 추이')
+        self.power_chart.set_labels(y_label='전력량 (kWh)')
         layout.addWidget(self.power_chart)
         
         widget.setLayout(layout)
@@ -229,26 +280,182 @@ class MainWindow(QMainWindow):
     def update_data(self):
         """데이터 갱신"""
         try:
+            now = datetime.now()
+            
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             # 히트펌프 데이터 갱신
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             hp_devices = self.data_service.get_all_heatpump_devices()
             
+            # 카드 업데이트
             for i, card in enumerate(self.heatpump_cards):
                 if i < len(hp_devices):
                     device_id = hp_devices[i]
                     stats = self.data_service.get_statistics_heatpump(device_id, hours=1, field='t_in')
                     card.update_value(f"{stats['latest']}°C")
+                    
+                    # ✅ 새로운 데이터가 있을 때만 로그 추가
+                    timeseries = self.data_service.get_timeseries_heatpump(device_id, hours=1, field='t_in')
+                    if timeseries and len(timeseries) > 0:
+                        latest_timestamp = timeseries[-1]['timestamp']
+                        
+                        last_logged = self.last_log_timestamps.get(f'HP_{device_id}')
+                        
+                        if last_logged is None or latest_timestamp > last_logged:
+                            # ✅✅ 입구/출구 온도 각각 조회
+                            stats_in = self.data_service.get_statistics_heatpump(device_id, hours=1, field='t_in')
+                            stats_out = self.data_service.get_statistics_heatpump(device_id, hours=1, field='t_out')
+                            stats_flow = self.data_service.get_statistics_heatpump(device_id, hours=1, field='flow')
+                            
+                            data = {
+                                'input_temp': stats_in['latest'],
+                                'output_temp': stats_out['latest'],
+                                'flow': stats_flow['latest']
+                            }
+                            self.log_viewer.add_sensor_data_log(latest_timestamp, 'HP', device_id, data)
+                            self.last_log_timestamps[f'HP_{device_id}'] = latest_timestamp
             
+            # 차트 업데이트
+            for device_id in hp_devices[:4]:
+                # 입구 온도
+                data_in = self.data_service.get_timeseries_heatpump(device_id, hours=1, field='t_in')
+                if data_in:
+                    self.heatpump_chart.add_line(
+                        f'{device_id}_in',
+                        data_in,
+                        color=Theme.HEATPUMP_COLOR,
+                        name=f'{device_id} 입구'
+                    )
+                
+                # 출구 온도
+                data_out = self.data_service.get_timeseries_heatpump(device_id, hours=1, field='t_out')
+                if data_out:
+                    self.heatpump_chart.add_line(
+                        f'{device_id}_out',
+                        data_out,
+                        color=Theme.PRIMARY,
+                        name=f'{device_id} 출구'
+                    )
+                
+                # 유량 (선택사항 - 스케일이 다를 수 있음)
+                data_flow = self.data_service.get_timeseries_heatpump(device_id, hours=1, field='flow')
+                if data_flow:
+                    self.heatpump_chart.add_line(
+                        f'{device_id}_flow',
+                        data_flow,
+                        color=Theme.WARNING,
+                        name=f'{device_id} 유량',
+                        width=1
+                    )
+            
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # 지중배관 데이터 갱신
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            gp_devices = self.data_service.get_all_groundpipe_devices()
+            
+            # 카드 업데이트
+            for i, card in enumerate(self.groundpipe_cards):
+                if i < len(gp_devices):
+                    device_id = gp_devices[i]
+                    stats = self.data_service.get_statistics_groundpipe(device_id, hours=1, field='t_in')
+                    card.update_value(f"{stats['latest']}°C")
+                    
+                    # ✅ 새로운 데이터가 있을 때만 로그 추가
+                    timeseries = self.data_service.get_timeseries_groundpipe(device_id, hours=1, field='t_in')
+                    if timeseries and len(timeseries) > 0:
+                        latest_timestamp = timeseries[-1]['timestamp']
+                        
+                        last_logged = self.last_log_timestamps.get(f'GP_{device_id}')
+                        
+                        if last_logged is None or latest_timestamp > last_logged:
+                            # ✅✅ 입구/출구 온도 각각 조회
+                            stats_in = self.data_service.get_statistics_groundpipe(device_id, hours=1, field='t_in')
+                            stats_out = self.data_service.get_statistics_groundpipe(device_id, hours=1, field='t_out')
+                            stats_flow = self.data_service.get_statistics_groundpipe(device_id, hours=1, field='flow')
+                            
+                            data = {
+                                'input_temp': stats_in['latest'],
+                                'output_temp': stats_out['latest'],
+                                'flow': stats_flow['latest']
+                            }
+                            self.log_viewer.add_sensor_data_log(latest_timestamp, 'GP', device_id, data)
+                            self.last_log_timestamps[f'GP_{device_id}'] = latest_timestamp
+            
+            # 차트 업데이트
+            for device_id in gp_devices[:4]:
+                # 입구 온도
+                data_in = self.data_service.get_timeseries_groundpipe(device_id, hours=1, field='t_in')
+                if data_in:
+                    self.groundpipe_chart.add_line(
+                        f'{device_id}_in',
+                        data_in,
+                        color=Theme.PIPE_COLOR,
+                        name=f'{device_id} 입구'
+                    )
+                
+                # 출구 온도
+                data_out = self.data_service.get_timeseries_groundpipe(device_id, hours=1, field='t_out')
+                if data_out:
+                    self.groundpipe_chart.add_line(
+                        f'{device_id}_out',
+                        data_out,
+                        color=Theme.PRIMARY,
+                        name=f'{device_id} 출구'
+                    )
+                
+                # 유량
+                data_flow = self.data_service.get_timeseries_groundpipe(device_id, hours=1, field='flow')
+                if data_flow:
+                    self.groundpipe_chart.add_line(
+                        f'{device_id}_flow',
+                        data_flow,
+                        color=Theme.WARNING,
+                        name=f'{device_id} 유량',
+                        width=1
+                    )
+            
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             # 전력량계 데이터 갱신
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             power_devices = self.data_service.get_all_power_devices()
             
+            # 카드 업데이트
             for i, card in enumerate(self.power_cards):
                 if i < len(power_devices):
                     device_id = power_devices[i]
                     stats = self.data_service.get_statistics_power(device_id, hours=1)
+                    
+                    # ✅✅ 카드 값 확인 (디버깅)
+                    logger.debug(f"[전력량계 카드] {device_id}: {stats['latest']} kWh")
                     card.update_value(f"{stats['latest']} kWh")
+                    
+                    # ✅ 새로운 데이터가 있을 때만 로그 추가
+                    timeseries = self.data_service.get_timeseries_power(device_id, hours=1)
+                    if timeseries and len(timeseries) > 0:
+                        latest_timestamp = timeseries[-1]['timestamp']
+                        latest_value = timeseries[-1]['value']
+                        
+                        # ✅✅ 로그 값 확인 (디버깅)
+                        logger.debug(f"[전력량계 로그] {device_id}: {latest_value} kWh @ {latest_timestamp}")
+                        
+                        last_logged = self.last_log_timestamps.get(f'ELEC_{device_id}')
+                        
+                        if last_logged is None or latest_timestamp > last_logged:
+                            data = {
+                                'total_energy': latest_value  # ✅✅ timeseries의 실제 값 사용
+                            }
+                            self.log_viewer.add_sensor_data_log(latest_timestamp, 'ELEC', device_id, data)
+                            self.last_log_timestamps[f'ELEC_{device_id}'] = latest_timestamp
+            
+            # 차트 업데이트
+            for device_id in power_devices[:4]:
+                data = self.data_service.get_timeseries_power(device_id, hours=1)
+                if data:
+                    self.power_chart.add_line(device_id, data, name=f'{device_id} 전력량')
             
             # 요약 카드 갱신
             self.hp_summary_card.update_value(f"{len(hp_devices)}개")
+            self.gp_summary_card.update_value(f"{len(gp_devices)}개")
             self.power_summary_card.update_value(f"{len(power_devices)}개")
             
             # 상태 업데이트
@@ -259,6 +466,7 @@ class MainWindow(QMainWindow):
             logger.error(f"데이터 갱신 오류: {e}", exc_info=True)
             self.status_label.setText('● 연결 끊김')
             self.status_label.setStyleSheet(f'color: {Theme.SECONDARY};')
+
     
     def open_ip_config(self):
         """플라스틱 함 IP 설정 다이얼로그 열기"""
@@ -270,6 +478,11 @@ class MainWindow(QMainWindow):
         dialog = PowerMeterConfigDialog(self)
         dialog.exec()
     
+    def open_csv_export(self):
+        """CSV 내보내기 다이얼로그 열기"""
+        dialog = CSVExportDialog(self)
+        dialog.exec()
+    
     def show_about(self):
         """프로그램 정보 표시"""
         QMessageBox.about(
@@ -278,7 +491,7 @@ class MainWindow(QMainWindow):
             '<h2>여주 센서 모니터링 시스템</h2>'
             '<p>버전: 1.0.0</p>'
             '<p>개발: SoluWins</p>'
-            '<p>설명: 히트펌프 및 전력량계 실시간 모니터링</p>'
+            '<p>설명: 히트펌프, 지중배관, 전력량계 실시간 모니터링</p>'
         )
     
     def closeEvent(self, event):
