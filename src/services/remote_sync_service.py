@@ -1,0 +1,226 @@
+# ==============================================
+# 원격 DB 재전송 서비스
+# ==============================================
+"""
+로컬 큐에 쌓인 데이터를 원격 DB로 재전송하는 백그라운드 서비스
+
+동작:
+- 30초마다 remote_send_queue 테이블 확인
+- 원격 DB가 살아있으면 순서대로 재전송
+- 성공 시 큐에서 삭제, 실패 시 retry_count 증가
+- retry_count가 MAX_RETRY 초과 시 해당 항목 폐기 (로그 기록)
+"""
+
+import json
+import logging
+import threading
+import time
+from datetime import datetime
+from typing import Optional
+
+import psycopg2
+
+from core.config import get_config
+from core.database import (
+    get_queue_items, delete_queue_item,
+    update_queue_retry, get_queue_count
+)
+
+logger = logging.getLogger(__name__)
+
+MAX_RETRY    = 20    # 최대 재시도 횟수 초과 시 폐기
+SYNC_INTERVAL = 30  # 재전송 주기 (초)
+
+# 테이블별 INSERT 쿼리
+REMOTE_QUERIES = {
+    'heatpump': """
+        INSERT INTO heatpump (device_id, timestamp, input_temp, output_temp, flow, energy)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT DO NOTHING
+    """,
+    'groundpipe': """
+        INSERT INTO groundpipe (device_id, timestamp, input_temp, output_temp, flow)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT DO NOTHING
+    """,
+    'elec': """
+        INSERT INTO elec (device_id, timestamp, total_energy)
+        VALUES (%s, %s, %s)
+        ON CONFLICT DO NOTHING
+    """,
+}
+
+
+class RemoteSyncService:
+    """원격 DB 재전송 백그라운드 서비스"""
+
+    def __init__(self):
+        self.config = get_config()
+        self._thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
+        self._running = False
+        self._remote_conn = None
+        logger.info("RemoteSyncService 초기화 완료")
+
+    def start(self):
+        if not self.config.db_remote_enabled:
+            logger.info("원격 DB 비활성화 상태 — RemoteSyncService 시작 안 함")
+            return
+
+        if self._running:
+            logger.warning("RemoteSyncService 이미 실행 중")
+            return
+
+        self._stop_event.clear()
+        self._running = True
+        self._thread = threading.Thread(
+            target=self._sync_loop,
+            daemon=True,
+            name="RemoteSyncService"
+        )
+        self._thread.start()
+        logger.info(f"RemoteSyncService 시작 (주기: {SYNC_INTERVAL}초)")
+
+    def stop(self):
+        if not self._running:
+            return
+        logger.info("RemoteSyncService 중지 요청")
+        self._stop_event.set()
+        self._running = False
+        self._close_remote_conn()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=5)
+        logger.info("RemoteSyncService 중지 완료")
+
+    def is_running(self) -> bool:
+        return self._running
+
+    # ─────────────────────────────────────────────
+    # 원격 연결 관리
+    # ─────────────────────────────────────────────
+    def _get_remote_conn(self):
+        """원격 DB 연결 가져오기 (재연결 포함)"""
+        try:
+            if self._remote_conn is None or self._remote_conn.closed:
+                self._remote_conn = psycopg2.connect(
+                    host=self.config.db_remote_host,
+                    port=self.config.db_remote_port,
+                    database=self.config.db_remote_name,
+                    user=self.config.db_remote_user,
+                    password=self.config.db_remote_password,
+                    connect_timeout=5
+                )
+                logger.info("원격 DB 재연결 성공")
+            return self._remote_conn
+        except Exception as e:
+            logger.warning(f"원격 DB 연결 실패: {e}")
+            self._remote_conn = None
+            return None
+
+    def _close_remote_conn(self):
+        if self._remote_conn:
+            try:
+                self._remote_conn.close()
+            except Exception:
+                pass
+            self._remote_conn = None
+
+    # ─────────────────────────────────────────────
+    # 재전송 루프
+    # ─────────────────────────────────────────────
+    def _sync_loop(self):
+        logger.info("원격 DB 재전송 루프 시작")
+        while not self._stop_event.is_set():
+            try:
+                queue_count = get_queue_count()
+                if queue_count > 0:
+                    logger.info(f"재전송 큐 {queue_count}건 처리 시작")
+                    self._process_queue()
+            except Exception as e:
+                logger.error(f"재전송 루프 오류: {e}", exc_info=True)
+
+            self._stop_event.wait(SYNC_INTERVAL)
+        logger.info("원격 DB 재전송 루프 종료")
+
+    def _process_queue(self):
+        """큐 항목 순서대로 재전송 처리"""
+        items = get_queue_items(limit=50)
+        if not items:
+            return
+
+        conn = self._get_remote_conn()
+        if conn is None:
+            logger.warning("원격 DB 연결 불가 — 재전송 다음 주기로 연기")
+            return
+
+        success_count = 0
+        fail_count = 0
+
+        for item in items:
+            # 최대 재시도 초과 시 폐기
+            if item['retry_count'] >= MAX_RETRY:
+                logger.error(
+                    f"큐 항목 폐기 (최대 재시도 초과): "
+                    f"id={item['id']}, table={item['table_name']}, "
+                    f"created_at={item['created_at']}"
+                )
+                delete_queue_item(item['id'])
+                continue
+
+            success = self._send_one(conn, item)
+            if success:
+                delete_queue_item(item['id'])
+                success_count += 1
+            else:
+                update_queue_retry(item['id'])
+                fail_count += 1
+                # 연속 실패 시 이번 주기 중단
+                break
+
+        if success_count > 0 or fail_count > 0:
+            logger.info(
+                f"재전송 완료 — 성공: {success_count}건, 실패: {fail_count}건"
+            )
+
+    def _send_one(self, conn, item: dict) -> bool:
+        """큐 항목 1건을 원격 DB에 전송"""
+        table_name = item['table_name']
+        query = REMOTE_QUERIES.get(table_name)
+
+        if query is None:
+            logger.error(f"알 수 없는 테이블명: {table_name}")
+            return False
+
+        try:
+            # payload 역직렬화
+            raw = item['payload']
+            if isinstance(raw, str):
+                params_list = json.loads(raw)
+            else:
+                params_list = list(raw)  # psycopg2가 dict로 줄 수도 있음
+
+            # datetime 문자열 복원
+            params = []
+            for v in params_list:
+                if isinstance(v, str):
+                    try:
+                        params.append(datetime.fromisoformat(v))
+                    except ValueError:
+                        params.append(v)
+                else:
+                    params.append(v)
+
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            conn.commit()
+            cursor.close()
+            return True
+
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            logger.warning(f"재전송 실패 (id={item['id']}): {e}")
+            self._remote_conn = None  # 연결 초기화
+            return False

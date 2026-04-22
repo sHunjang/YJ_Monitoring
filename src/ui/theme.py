@@ -28,6 +28,7 @@ class Theme:
     # 강조색
     PRIMARY = '#1976d2'         # 메인 강조 (파란색)
     SECONDARY = '#d32f2f'       # 경고/오류 (빨강)
+    DANGER = '#d32f2f'          # 위험/오류 (빨강) - SECONDARY와 동일
     SUCCESS = '#388e3c'         # 성공 (초록)
     WARNING = '#f57c00'         # 주의 (주황)
     
