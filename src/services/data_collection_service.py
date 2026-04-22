@@ -27,11 +27,6 @@ from sensors.box.service import BoxSensorService
 from sensors.power.service import PowerMeterService
 from core.config import get_config
 
-from services.remote_sync_service import RemoteSyncService
-
-from services.alarm_service import AlarmService
-from core.database import get_queue_count
-
 logger = logging.getLogger(__name__)
 
 
@@ -50,8 +45,6 @@ class DataCollectionService:
         # 서비스 인스턴스
         self.power_meter_service = PowerMeterService()
         self.box_sensor_service = BoxSensorService()
-        self.remote_sync_service = RemoteSyncService()
-        self.alarm_service = AlarmService.get_instance()
         
         # 통합 수집 스레드
         self._thread: Optional[threading.Thread] = None
@@ -108,8 +101,6 @@ class DataCollectionService:
         
         logger.info(f"DataCollectionService 시작 (주기: {interval}초)")
         logger.info("=" * 70)
-        
-        self.remote_sync_service.start()
     
     def stop(self):
         """
@@ -132,8 +123,6 @@ class DataCollectionService:
             self._thread.join(timeout=5)
         
         logger.info("DataCollectionService 중지 완료")
-        
-        self.remote_sync_service.stop()
     
     def _collection_loop(self):
         """데이터 수집 루프 (백그라운드 스레드)"""
@@ -196,8 +185,8 @@ class DataCollectionService:
             box_results = self.box_sensor_service.collector.collect_all(power_meter_data)
             
             box_success = (
-                sum(1 for v in box_results['heatpump'].values() if v.get('success')) +
-                sum(1 for v in box_results['groundpipe'].values() if v.get('success'))
+                sum(1 for v in box_results['heatpump'].values() if v) +
+                sum(1 for v in box_results['groundpipe'].values() if v)
             )
             box_total = len(box_results['heatpump']) + len(box_results['groundpipe'])
             
@@ -223,26 +212,6 @@ class DataCollectionService:
                 f"플라스틱 함 {box_success}개, "
                 f"소요 시간: {elapsed_time:.2f}초"
             )
-            # ── 알림 체크 ──────────────────────────────
-
-            self.alarm_service.check_collection_result({
-                'box_sensor': box_results,
-                'power_meter': power_meter_data
-            })
-            self.alarm_service.check_queue_size(get_queue_count())
-
-            # 유량 0 알림 (수집 결과에서 직접 체크)
-            for device_id, result in box_results.get('heatpump', {}).items():
-                if result.get('success'):
-                    self.alarm_service.check_flow_zero(
-                        device_id, 'heatpump', result.get('flow')
-                    )
-
-            for device_id, result in box_results.get('groundpipe', {}).items():
-                if result.get('success'):
-                    self.alarm_service.check_flow_zero(
-                        device_id, 'groundpipe', result.get('flow')
-                    )
             logger.info("=" * 70)
             
             # 콜백 호출 (UI 업데이트)

@@ -1,12 +1,12 @@
 # ==============================================
-# 원격 DB 재전송 서비스
+# 외부 DB 재전송 서비스
 # ==============================================
 """
-로컬 큐에 쌓인 데이터를 원격 DB로 재전송하는 백그라운드 서비스
+로컬 큐에 쌓인 데이터를 외부 DB로 재전송하는 백그라운드 서비스
 
 동작:
 - 30초마다 remote_send_queue 테이블 확인
-- 원격 DB가 살아있으면 순서대로 재전송
+- 외부 DB가 살아있으면 순서대로 재전송
 - 성공 시 큐에서 삭제, 실패 시 retry_count 증가
 - retry_count가 MAX_RETRY 초과 시 해당 항목 폐기 (로그 기록)
 """
@@ -52,7 +52,7 @@ REMOTE_QUERIES = {
 
 
 class RemoteSyncService:
-    """원격 DB 재전송 백그라운드 서비스"""
+    """외부 DB 재전송 백그라운드 서비스"""
 
     def __init__(self):
         self.config = get_config()
@@ -64,7 +64,7 @@ class RemoteSyncService:
 
     def start(self):
         if not self.config.db_remote_enabled:
-            logger.info("원격 DB 비활성화 상태 — RemoteSyncService 시작 안 함")
+            logger.info("외부 DB 비활성화 상태 — RemoteSyncService 시작 안 함")
             return
 
         if self._running:
@@ -96,10 +96,10 @@ class RemoteSyncService:
         return self._running
 
     # ─────────────────────────────────────────────
-    # 원격 연결 관리
+    # 외부 연결 관리
     # ─────────────────────────────────────────────
     def _get_remote_conn(self):
-        """원격 DB 연결 가져오기 (재연결 포함)"""
+        """외부 DB 연결 가져오기 (재연결 포함)"""
         try:
             if self._remote_conn is None or self._remote_conn.closed:
                 self._remote_conn = psycopg2.connect(
@@ -110,10 +110,10 @@ class RemoteSyncService:
                     password=self.config.db_remote_password,
                     connect_timeout=5
                 )
-                logger.info("원격 DB 재연결 성공")
+                logger.info("외부 DB 재연결 성공")
             return self._remote_conn
         except Exception as e:
-            logger.warning(f"원격 DB 연결 실패: {e}")
+            logger.warning(f"외부 DB 연결 실패: {e}")
             self._remote_conn = None
             return None
 
@@ -129,7 +129,7 @@ class RemoteSyncService:
     # 재전송 루프
     # ─────────────────────────────────────────────
     def _sync_loop(self):
-        logger.info("원격 DB 재전송 루프 시작")
+        logger.info("외부 DB 재전송 루프 시작")
         while not self._stop_event.is_set():
             try:
                 queue_count = get_queue_count()
@@ -140,7 +140,7 @@ class RemoteSyncService:
                 logger.error(f"재전송 루프 오류: {e}", exc_info=True)
 
             self._stop_event.wait(SYNC_INTERVAL)
-        logger.info("원격 DB 재전송 루프 종료")
+        logger.info("외부 DB 재전송 루프 종료")
 
     def _process_queue(self):
         """큐 항목 순서대로 재전송 처리"""
@@ -150,7 +150,7 @@ class RemoteSyncService:
 
         conn = self._get_remote_conn()
         if conn is None:
-            logger.warning("원격 DB 연결 불가 — 재전송 다음 주기로 연기")
+            logger.warning("외부 DB 연결 불가 — 재전송 다음 주기로 연기")
             return
 
         success_count = 0
@@ -183,7 +183,7 @@ class RemoteSyncService:
             )
 
     def _send_one(self, conn, item: dict) -> bool:
-        """큐 항목 1건을 원격 DB에 전송"""
+        """큐 항목 1건을 외부 DB에 전송"""
         table_name = item['table_name']
         query = REMOTE_QUERIES.get(table_name)
 

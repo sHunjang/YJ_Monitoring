@@ -99,7 +99,7 @@ WHERE table_schema = 'public'
 
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- 5. 원격 DB 재전송 큐 테이블
+-- 5. 외부 DB 재전송 큐 테이블
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 DROP TABLE IF EXISTS remote_send_queue CASCADE;
 
@@ -115,4 +115,4 @@ CREATE TABLE remote_send_queue (
 CREATE INDEX idx_queue_created ON remote_send_queue(created_at ASC);
 CREATE INDEX idx_queue_retry   ON remote_send_queue(retry_count ASC);
 
-COMMENT ON TABLE remote_send_queue IS '원격 DB 재전송 대기 큐';
+COMMENT ON TABLE remote_send_queue IS '외부 DB 재전송 대기 큐';

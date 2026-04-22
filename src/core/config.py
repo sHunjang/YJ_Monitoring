@@ -40,15 +40,15 @@ class Config:
         self.db_name = os.getenv('DB_NAME', 'sensor_yeoju')
         self.db_user = os.getenv('DB_USER', 'postgres')
         self.db_password = os.getenv('DB_PASSWORD', '1234')
-        
+
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # 외부 DB 설정
+        # 외부 데이터베이스 설정
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        self.db_remote_enabled = os.getenv('DB_REMOTE_ENABLED', 'false').lower() == 'true'
-        self.db_remote_host = os.getenv('DB_REMOTE_HOST', '14.42.171.209')
-        self.db_remote_port = int(os.getenv('DB_REMOTE_PORT', '5432'))
-        self.db_remote_name = os.getenv('DB_REMOTE_NAME', 'senor_yeoju')
-        self.db_remote_user = os.getenv('DB_REMOTE_USER', 'postgres')
+        self.db_remote_enabled  = os.getenv('DB_REMOTE_ENABLED', 'false').lower() == 'true'
+        self.db_remote_host     = os.getenv('DB_REMOTE_HOST', '')
+        self.db_remote_port     = int(os.getenv('DB_REMOTE_PORT', '5432'))
+        self.db_remote_name     = os.getenv('DB_REMOTE_NAME', 'sensor_yeoju')
+        self.db_remote_user     = os.getenv('DB_REMOTE_USER', 'postgres')
         self.db_remote_password = os.getenv('DB_REMOTE_PASSWORD', '1234')
         
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

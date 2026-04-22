@@ -40,12 +40,11 @@ logger = logging.getLogger(__name__)
 # 전역 연결 풀
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 _connection_pool = None
-_remote_connection_pool = None
 
 
 def initialize_connection_pool(minconn: int = 1, maxconn: int = 10):
     """데이터베이스 연결 풀 초기화"""
-    global _connection_pool, _remote_connection_pool
+    global _connection_pool
     
     if _connection_pool is not None:
         logger.warning("연결 풀이 이미 초기화되어 있습니다.")
@@ -77,39 +76,16 @@ def initialize_connection_pool(minconn: int = 1, maxconn: int = 10):
     except Exception as e:
         logger.error(f"✗ 데이터베이스 연결 풀 초기화 실패: {e}", exc_info=True)
         raise
-    
-    if config.db_remote_enabled and config.db_remote_host:
-        try:
-            logger.info(f"원격 DB 연결 풀 초기화: {config.db_remote_host}:{config.db_remote_port}")
-            _remote_connection_pool = psycopg2.pool.ThreadedConnectionPool(
-                minconn=1,
-                maxconn=5,
-                host=config.db_remote_host,
-                port=config.db_remote_port,
-                database=config.db_remote_name,
-                user=config.db_remote_user,
-                password=config.db_remote_password,
-                connect_timeout=5,
-            )
-            logger.info("원격 DB 연결 풀 초기화 완료")
-        except Exception as e:
-            logger.warning(f"원격 DB 연결 풀 초기화 실패 (현재 로컬만 사용 중): {e}")
-            _remote_connection_pool = None
 
 
 def close_connection_pool():
     """연결 풀 종료"""
-    global _connection_pool, _remote_connection_pool
+    global _connection_pool
     
     if _connection_pool is not None:
         _connection_pool.closeall()
         _connection_pool = None
         logger.info("✓ 데이터베이스 연결 풀 종료")
-        
-    if _remote_connection_pool is not None:
-        _remote_connection_pool.closeall()
-        _remote_connection_pool = None
-        logger.info("✓ 원격 DB 연결 풀 종료")
 
 
 def get_connection():
@@ -166,159 +142,11 @@ def test_db_connection() -> bool:
         logger.error(f"✗ 데이터베이스 연결 테스트 오류: {e}", exc_info=True)
         return False
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 원격 저장 헬퍼 함수
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-def _insert_remote(table_name: str, query: str, params: tuple):
-    """
-    원격 DB에 데이터 저장.
-    실패 시 로컬 큐 테이블에 저장하여 나중에 재전송.
-    """
-    global _remote_connection_pool
-
-    if _remote_connection_pool is None:
-        
-        # 원격 풀 자체가 없으면 바로 큐에 저장
-        _enqueue_failed(table_name, params)
-        return
-
-    conn = None
-    
-    try:
-        conn = _remote_connection_pool.getconn()
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        conn.commit()
-        cursor.close()
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.warning(f"⚠ 원격 DB 저장 실패 (로컬은 정상): {e}")
-        _enqueue_failed(table_name, params)
-    finally:
-        if conn:
-            try:
-                _remote_connection_pool.putconn(conn)
-            except Exception:
-                pass
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Enqueue 함수 추가
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-def _enqueue_failed(table_name: str, params: tuple):
-    """원격 저장 실패 데이터를 로컬 큐에 저장"""
-    import json
-
-    # params를 JSON으로 직렬화
-    # datetime → isoformat 변환
-    serialized = []
-    for p in params:
-        if isinstance(p, datetime):
-            serialized.append(p.isoformat())
-        else:
-            serialized.append(p)
-
-    payload = json.dumps(serialized, ensure_ascii=False)
-
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO remote_send_queue (table_name, payload)
-                VALUES (%s, %s)
-                """,
-                (table_name, payload)
-            )
-            conn.commit()
-            cursor.close()
-            logger.debug(f"큐 저장 완료: {table_name}")
-    except Exception as e:
-        logger.error(f"큐 저장 실패: {e}")
-
-
-def get_queue_items(limit: int = 50) -> List[Dict]:
-    """재전송 대기 중인 큐 항목 조회"""
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT id, table_name, payload, retry_count, created_at
-                FROM remote_send_queue
-                ORDER BY created_at ASC
-                LIMIT %s
-                """,
-                (limit,)
-            )
-            rows = cursor.fetchall()
-            cursor.close()
-            return [
-                {
-                    'id':          row[0],
-                    'table_name':  row[1],
-                    'payload':     row[2],
-                    'retry_count': row[3],
-                    'created_at':  row[4],
-                }
-                for row in rows
-            ]
-    except Exception as e:
-        logger.error(f"큐 조회 실패: {e}")
-        return []
-
-
-def delete_queue_item(item_id: int):
-    """재전송 성공한 큐 항목 삭제"""
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "DELETE FROM remote_send_queue WHERE id = %s",
-                (item_id,)
-            )
-            conn.commit()
-            cursor.close()
-    except Exception as e:
-        logger.error(f"큐 항목 삭제 실패: {e}")
-
-
-def update_queue_retry(item_id: int):
-    """재전송 실패 시 retry_count, last_tried 업데이트"""
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE remote_send_queue
-                SET retry_count = retry_count + 1,
-                    last_tried  = NOW()
-                WHERE id = %s
-                """,
-                (item_id,)
-            )
-            conn.commit()
-            cursor.close()
-    except Exception as e:
-        logger.error(f"큐 retry 업데이트 실패: {e}")
-
-
-def get_queue_count() -> int:
-    """현재 큐에 쌓인 항목 수 조회"""
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM remote_send_queue")
-            count = cursor.fetchone()[0]
-            cursor.close()
-            return count
-    except Exception as e:
-        logger.error(f"큐 카운트 조회 실패: {e}")
-        return 0
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 쿼리 실행 헬퍼 함수 (UI용)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 def execute_query(query: str, params: tuple = None, fetch_mode: str = 'all'):
     """쿼리 실행 헬퍼 함수 (UI 데이터 조회용)"""
     connection = None
@@ -395,9 +223,6 @@ def insert_heatpump_data(
             
             conn.commit()
             cursor.close()
-            
-            # 원격 DB 저장
-            _insert_remote('heatpump', query, (device_id, timestamp, input_temp, output_temp, flow, energy))
             
             logger.debug(
                 f"[{device_id}] 히트펌프 데이터 저장: "
@@ -502,9 +327,6 @@ def insert_groundpipe_data(
             conn.commit()
             cursor.close()
             
-            # 원격 DB 저장
-            _insert_remote('groundpipe', query, (device_id, timestamp, input_temp, output_temp, flow))
-            
             logger.debug(
                 f"[{device_id}] 지중배관 데이터 저장: "
                 f"input_temp={input_temp}°C, output_temp={output_temp}°C, Flow={flow}L"
@@ -597,10 +419,7 @@ def insert_power_meter_data(
             
             conn.commit()
             cursor.close()
-
-            # 원격 DB 저장
-            _insert_remote('elec', query, (device_id, timestamp, total_energy))
-
+            
             logger.debug(f"[{device_id}] 전력량계 데이터 저장: {total_energy}kWh")
             
             return True
@@ -732,6 +551,127 @@ def get_all_power_meter_devices() -> List[str]:
         logger.error(f"전력량계 장치 목록 조회 실패: {e}", exc_info=True)
         return []
 
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 외부 DB 재전송 큐
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_remote_connection_pool = None
+
+
+def _insert_remote(table_name: str, query: str, params: tuple):
+    """외부 DB에 데이터 저장. 실패 시 로컬 큐에 저장."""
+    global _remote_connection_pool
+    if _remote_connection_pool is None:
+        _enqueue_failed(table_name, params)
+        return
+    conn = None
+    try:
+        conn = _remote_connection_pool.getconn()
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning(f"⚠ 외부 DB 저장 실패 → 큐 저장: {e}")
+        _enqueue_failed(table_name, params)
+    finally:
+        if conn:
+            try:
+                _remote_connection_pool.putconn(conn)
+            except Exception:
+                pass
+
+
+def _enqueue_failed(table_name: str, params: tuple):
+    """외부 저장 실패 데이터를 로컬 큐에 저장"""
+    import json
+    serialized = []
+    for p in params:
+        if isinstance(p, datetime):
+            serialized.append(p.isoformat())
+        else:
+            serialized.append(p)
+    payload = json.dumps(serialized, ensure_ascii=False)
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO remote_send_queue (table_name, payload) VALUES (%s, %s)",
+                (table_name, payload)
+            )
+            conn.commit()
+            cursor.close()
+            logger.debug(f"큐 저장 완료: {table_name}")
+    except Exception as e:
+        logger.error(f"큐 저장 실패: {e}")
+
+
+def get_queue_items(limit: int = 50) -> List[Dict]:
+    """재전송 대기 중인 큐 항목 조회"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id, table_name, payload, retry_count, created_at
+                   FROM remote_send_queue
+                   ORDER BY created_at ASC LIMIT %s""",
+                (limit,)
+            )
+            rows = cursor.fetchall()
+            cursor.close()
+            return [
+                {'id': r[0], 'table_name': r[1], 'payload': r[2],
+                 'retry_count': r[3], 'created_at': r[4]}
+                for r in rows
+            ]
+    except Exception as e:
+        logger.error(f"큐 조회 실패: {e}")
+        return []
+
+
+def delete_queue_item(item_id: int):
+    """재전송 성공한 큐 항목 삭제"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM remote_send_queue WHERE id = %s", (item_id,))
+            conn.commit()
+            cursor.close()
+    except Exception as e:
+        logger.error(f"큐 항목 삭제 실패: {e}")
+
+
+def update_queue_retry(item_id: int):
+    """재전송 실패 시 retry_count, last_tried 업데이트"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """UPDATE remote_send_queue
+                   SET retry_count = retry_count + 1, last_tried = NOW()
+                   WHERE id = %s""",
+                (item_id,)
+            )
+            conn.commit()
+            cursor.close()
+    except Exception as e:
+        logger.error(f"큐 retry 업데이트 실패: {e}")
+
+
+def get_queue_count() -> int:
+    """현재 큐에 쌓인 항목 수 조회"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM remote_send_queue")
+            count = cursor.fetchone()[0]
+            cursor.close()
+            return count
+    except Exception as e:
+        logger.error(f"큐 카운트 조회 실패: {e}")
+        return 0
 
 # ==============================================
 # 테스트 코드

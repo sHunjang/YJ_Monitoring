@@ -142,6 +142,25 @@ class ConfigService:
             return data['groundpipe']
         return []
     
+    def get_powermeter_groups(self) -> List[Dict[str, Any]]:
+        """전력량계 그룹 목록 조회 (box_ips.json 기준)"""
+        data = self.load_box_ips()
+        if data and 'powermeter_groups' in data:
+            return data['powermeter_groups']
+        return []
+
+    def get_all_power_meter_devices(self) -> List[Dict[str, Any]]:
+        """전체 전력량계 장치 목록 조회 (box_ips.json 기준, 그룹 펼쳐서 반환)"""
+        groups = self.get_powermeter_groups()
+        meters = []
+        for group in groups:
+            for meter in group.get('meters', []):
+                m = dict(meter)
+                m['ip']   = group['ip']
+                m['port'] = group['port']
+                meters.append(m)
+        return meters
+
     def get_device_config(self, device_id: str) -> Optional[Dict[str, Any]]:
         """
         특정 장치의 전체 설정 조회 (IP + Slave IDs)

@@ -7,7 +7,7 @@
 알림 조건:
 - 히트펌프/지중배관 유량 = 0
 - 센서 데이터 수집 실패
-- 원격 DB 연결 끊김
+- 외부 DB 연결 끊김
 - 재전송 큐 50건 초과
 
 중복 알림 방지: 같은 key로 발생한 알림은 해제될 때까지 재발생 안 함
@@ -175,16 +175,16 @@ class AlarmService:
         key = 'remote_queue_overflow'
         if queue_count >= 50:
             self.add(key, 'warning',
-                     f'재전송 대기 큐 {queue_count}건 — 원격 DB 연결을 확인하세요')
+                     f'재전송 대기 큐 {queue_count}건 — 외부 DB 연결을 확인하세요')
         else:
             self.resolve(key)
 
     def check_remote_db(self, is_connected: bool):
-        """원격 DB 연결 상태 알림 체크"""
+        """외부 DB 연결 상태 알림 체크"""
         key = 'remote_db_disconnected'
         if not is_connected:
             self.add(key, 'warning',
-                     '원격 DB 연결 끊김 — 데이터는 로컬에 저장 중입니다')
+                     '외부 DB 연결 끊김 — 데이터는 로컬에 저장 중입니다')
         else:
             self.resolve(key)
 
