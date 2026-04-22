@@ -40,11 +40,12 @@ logger = logging.getLogger(__name__)
 # 전역 연결 풀
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 _connection_pool = None
+_remote_connection_pool = None
 
 
 def initialize_connection_pool(minconn: int = 1, maxconn: int = 10):
     """데이터베이스 연결 풀 초기화"""
-    global _connection_pool
+    global _connection_pool, _remote_connection_pool
     
     if _connection_pool is not None:
         logger.warning("연결 풀이 이미 초기화되어 있습니다.")
@@ -76,16 +77,39 @@ def initialize_connection_pool(minconn: int = 1, maxconn: int = 10):
     except Exception as e:
         logger.error(f"✗ 데이터베이스 연결 풀 초기화 실패: {e}", exc_info=True)
         raise
+    
+    if config.db_remote_enabled and config.db_remote_host:
+        try:
+            logger.info(f"원격 DB 연결 풀 초기화: {config.db_remote_host}:{config.db_remote_port}")
+            _remote_connection_pool = psycopg2.pool.ThreadedConnectionPool(
+                minconn=1,
+                maxconn=5,
+                host=config.db_remote_host,
+                port=config.db_remote_port,
+                database=config.db_remote_name,
+                user=config.db_remote_user,
+                password=config.db_remote_password,
+                connect_timeout=5,
+            )
+            logger.info("원격 DB 연결 풀 초기화 완료")
+        except Exception as e:
+            logger.warning(f"원격 DB 연결 풀 초기화 실패 (현재 로컬만 사용 중): {e}")
+            _remote_connection_pool = None
 
 
 def close_connection_pool():
     """연결 풀 종료"""
-    global _connection_pool
+    global _connection_pool, _remote_connection_pool
     
     if _connection_pool is not None:
         _connection_pool.closeall()
         _connection_pool = None
         logger.info("✓ 데이터베이스 연결 풀 종료")
+        
+    if _remote_connection_pool is not None:
+        _remote_connection_pool.closeall()
+        _remote_connection_pool = None
+        logger.info("✓ 원격 DB 연결 풀 종료")
 
 
 def get_connection():
@@ -142,11 +166,34 @@ def test_db_connection() -> bool:
         logger.error(f"✗ 데이터베이스 연결 테스트 오류: {e}", exc_info=True)
         return False
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 원격 저장 헬퍼 함수
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def _insert_remote(query: str, params: tuple):
+    """원격 DB에 데이터 저장 (실패해도 로컬에 영향 없음)"""
+    global _remote_connection_pool
+
+    if _remote_connection_pool is None:
+        return
+
+    conn = None
+    try:
+        conn = _remote_connection_pool.getconn()
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning(f"⚠ 원격 DB 저장 실패 (로컬은 정상): {e}")
+    finally:
+        if conn:
+            _remote_connection_pool.putconn(conn)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 쿼리 실행 헬퍼 함수 (UI용)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 def execute_query(query: str, params: tuple = None, fetch_mode: str = 'all'):
     """쿼리 실행 헬퍼 함수 (UI 데이터 조회용)"""
     connection = None
@@ -223,6 +270,9 @@ def insert_heatpump_data(
             
             conn.commit()
             cursor.close()
+            
+            # 원격 DB 저장
+            _insert_remote(query, (device_id, timestamp, input_temp, output_temp, flow, energy))
             
             logger.debug(
                 f"[{device_id}] 히트펌프 데이터 저장: "
@@ -327,6 +377,9 @@ def insert_groundpipe_data(
             conn.commit()
             cursor.close()
             
+            # 원격 DB 저장
+            _insert_remote(query, (device_id, timestamp, input_temp, output_temp, flow))
+            
             logger.debug(
                 f"[{device_id}] 지중배관 데이터 저장: "
                 f"input_temp={input_temp}°C, output_temp={output_temp}°C, Flow={flow}L"
@@ -419,7 +472,10 @@ def insert_power_meter_data(
             
             conn.commit()
             cursor.close()
-            
+
+            # 원격 DB 저장
+            _insert_remote(query, (device_id, timestamp, total_energy))
+
             logger.debug(f"[{device_id}] 전력량계 데이터 저장: {total_energy}kWh")
             
             return True
