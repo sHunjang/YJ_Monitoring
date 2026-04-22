@@ -1,0 +1,99 @@
+{
+    "comment": "전력량계 설정",
+    "last_updated": "2026-01-30T09:00:00",
+    "ip": "172.30.1.86",
+    "port": 8899,
+    "meters": [
+        {
+            "id": 31,
+            "device_id": "Total",
+            "slave_id": 31,
+            "name": "전체 전력량",
+            "description": "전체 전력량 합계",
+            "enabled": true
+        },
+        {
+            "id": 11,
+            "device_id": "열풍기_1",
+            "slave_id": 11,
+            "name": "열풍기_1",
+            "description": "열풍기_1",
+            "enabled": true
+        },
+        {
+            "id": 12,
+            "device_id": "열풍기_2",
+            "slave_id": 12,
+            "name": "열풍기_2",
+            "description": "열풍기_2",
+            "enabled": true
+        },
+        {
+            "id": 13,
+            "device_id": "열풍기_3",
+            "slave_id": 13,
+            "name": "열풍기_3",
+            "description": "열풍기_3",
+            "enabled": true
+        },
+        {
+            "id": 14,
+            "device_id": "열풍기_4",
+            "slave_id": 14,
+            "name": "열풍기_4",
+            "description": "열풍기_4",
+            "enabled": true
+        },
+        {
+            "id": 15,
+            "device_id": "열풍기_5",
+            "slave_id": 15,
+            "name": "열풍기_5",
+            "description": "열풍기_5",
+            "enabled": true
+        },
+        {
+            "id": 16,
+            "device_id": "열풍기_6",
+            "slave_id": 16,
+            "name": "열풍기_6",
+            "description": "열풍기_6",
+            "enabled": true
+        },
+        {
+            "id": 1,
+            "device_id": "히트펌프_1",
+            "slave_id": 1,
+            "name": "히트펌프_1",
+            "description": "히트펌프 1",
+            "enabled": true
+        }
+        ,
+        {
+            "id": 2,
+            "device_id": "히트펌프_2",
+            "slave_id": 2,
+            "name": "히트펌프_2",
+            "description": "히트펌프 2",
+            "enabled": true
+        }
+        ,
+        {
+            "id": 3,
+            "device_id": "히트펌프_3",
+            "slave_id": 3,
+            "name": "히트펌프_3",
+            "description": "히트펌프 3",
+            "enabled": true
+        }
+        ,
+        {
+            "id": 4,
+            "device_id": "히트펌프_4",
+            "slave_id": 4,
+            "name": "히트펌프_4",
+            "description": "히트펌프 4",
+            "enabled": true
+        }
+    ]
+}

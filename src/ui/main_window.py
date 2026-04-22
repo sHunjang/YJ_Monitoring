@@ -26,6 +26,8 @@ from ui.theme import Theme
 from ui.widgets.sensor_card import SensorCard
 from ui.widgets.chart_widget import ChartWidget
 from ui.widgets.log_viewer_widget import LogViewerWidget
+from ui.widgets.cop_tab_widget import CopTabWidget
+from ui.dialogs.layout_map_dialog import LayoutMapDialog
 from ui.dialogs import IPConfigDialog, PowerMeterConfigDialog, CSVExportDialog
 from services.ui_data_service import UIDataService
 
@@ -117,6 +119,10 @@ class MainWindow(QMainWindow):
         # 탭 4: 전력량계
         power_tab = self.create_power_tab()
         self.tabs.addTab(power_tab, '⚡ 전력량계')
+
+        # 탭 5: COP
+        self.cop_tab = CopTabWidget(self.data_service)
+        self.tabs.addTab(self.cop_tab, '📈 COP')
         
         main_layout.addWidget(self.tabs)
         
@@ -150,15 +156,9 @@ class MainWindow(QMainWindow):
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         settings_menu = menubar.addMenu('설정')
         
-        # 플라스틱 함 IP 설정
-        ip_config_action = QAction('🌡️ 플라스틱 함 IP 설정', self)
-        ip_config_action.triggered.connect(self.open_ip_config)
-        settings_menu.addAction(ip_config_action)
-        
-        # 전력량계 설정
-        power_config_action = QAction('⚡ 전력량계 설정', self)
-        power_config_action.triggered.connect(self.open_power_config)
-        settings_menu.addAction(power_config_action)
+        layout_map_action = QAction('🏭 배치도', self)
+        layout_map_action.triggered.connect(self.open_layout_map)
+        settings_menu.addAction(layout_map_action)
         
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # 도움말 메뉴
@@ -617,6 +617,10 @@ class MainWindow(QMainWindow):
             self.hp_summary_card.update_value(f"{len(hp_devices)}개")
             self.gp_summary_card.update_value(f"{len(gp_devices)}개")
             self.power_summary_card.update_value(f"{len(power_devices)}개")
+
+            # COP 탭 갱신 (현재 COP 탭이 선택된 경우에만 갱신하여 성능 절약)
+            if self.tabs.currentWidget() is self.cop_tab:
+                self.cop_tab.refresh()
             
             # 상태 업데이트
             self.status_label.setText('● 연결됨')
@@ -651,8 +655,8 @@ class MainWindow(QMainWindow):
             self,
             '프로그램 정보',
             '<h2>여주 센서 모니터링 시스템</h2>'
-            '<p>버전: 1.0.0</p>'
-            '<p>개발: SoluWins</p>'
+            '<p>버전: 1.0</p>'
+            '<p>개발: Soluwins</p>'
             '<p>설명: 히트펌프, 지중배관, 전력량계 실시간 모니터링</p>'
         )
     
@@ -672,6 +676,10 @@ class MainWindow(QMainWindow):
             event.accept()
         else:
             event.ignore()
+            
+    def open_layout_map(self):
+        dialog = LayoutMapDialog(self)
+        dialog.exec()
 
 
 # ==============================================

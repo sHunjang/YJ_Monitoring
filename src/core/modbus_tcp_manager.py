@@ -26,7 +26,10 @@ import logging
 import threading
 from typing import Dict, Optional
 from pymodbus.client import ModbusTcpClient
-from pymodbus.framer import ModbusRtuFramer  # RTU Framer (CRC 포함)
+try:
+    from pymodbus.framer import ModbusRtuFramer  # pymodbus 3.x 이하
+except ImportError:
+    from pymodbus.framer import FramerRTU as ModbusRtuFramer  # pymodbus 3.7+
 
 from core.config import get_config
 

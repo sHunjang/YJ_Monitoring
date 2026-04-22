@@ -1,0 +1,327 @@
+{
+  "comment": "센서 배치도 설정",
+  "last_updated": "2026-02-24T16:45:23.783719",
+  "sensor_config": {
+    "comment": "각 함의 센서 Slave ID 설정",
+    "temp1_slave_id": 1,
+    "temp2_slave_id": 2,
+    "flow_slave_id": 3
+  },
+  "heatpump": [
+    {
+      "id": 4,
+      "device_id": "HP_4",
+      "name": "히트펌프_4",
+      "ip": "172.30.1.105",
+      "port": 8899,
+      "description": "히트펌프 4",
+      "enabled": true,
+      "sensors": {
+        "temp1_slave_id": 1,
+        "temp2_slave_id": 2,
+        "flow_slave_id": 3
+      },
+      "pos_x": 0.07,
+      "pos_y": 0.63
+    },
+    {
+      "id": 3,
+      "device_id": "HP_3",
+      "name": "히트펌프_3",
+      "ip": "172.30.1.104",
+      "port": 8899,
+      "description": "히트펌프 3",
+      "enabled": true,
+      "sensors": {
+        "temp1_slave_id": 1,
+        "temp2_slave_id": 2,
+        "flow_slave_id": 3
+      },
+      "pos_x": 0.07,
+      "pos_y": 0.28
+    },
+    {
+      "id": 2,
+      "device_id": "HP_2",
+      "name": "히트펌프_2",
+      "ip": "172.30.1.96",
+      "port": 8899,
+      "description": "히트펌프 2",
+      "enabled": true,
+      "sensors": {
+        "temp1_slave_id": 1,
+        "temp2_slave_id": 2,
+        "flow_slave_id": 3
+      },
+      "pos_x": 0.93,
+      "pos_y": 0.28
+    },
+    {
+      "id": 1,
+      "device_id": "HP_1",
+      "name": "히트펌프_1",
+      "ip": "172.30.1.95",
+      "port": 8899,
+      "description": "히트펌프 1",
+      "enabled": true,
+      "sensors": {
+        "temp1_slave_id": 1,
+        "temp2_slave_id": 2,
+        "flow_slave_id": 3
+      },
+      "pos_x": 0.927506531788035,
+      "pos_y": 0.6627426810477658
+    }
+  ],
+  "groundpipe": [
+    {
+      "id": 4,
+      "device_id": "GP_4",
+      "name": "지중배관_4",
+      "ip": "172.30.1.90",
+      "port": 8899,
+      "description": "지중배관 4",
+      "enabled": true,
+      "sensors": {
+        "temp1_slave_id": 1,
+        "temp2_slave_id": 2,
+        "flow_slave_id": 3
+      },
+      "pos_x": 0.4133561108505839,
+      "pos_y": 0.6987673343605549
+    },
+    {
+      "id": 3,
+      "device_id": "GP_3",
+      "name": "지중배관_3",
+      "ip": "172.30.1.91",
+      "port": 8899,
+      "description": "지중배관 3",
+      "enabled": true,
+      "sensors": {
+        "temp1_slave_id": 1,
+        "temp2_slave_id": 2,
+        "flow_slave_id": 3
+      },
+      "pos_x": 0.5857506531788036,
+      "pos_y": 0.7033898305084746
+    },
+    {
+      "id": 1,
+      "device_id": "GP_1",
+      "name": "지중배관_1",
+      "ip": "172.30.1.92",
+      "port": 8899,
+      "description": "지중배관 1",
+      "enabled": true,
+      "sensors": {
+        "temp1_slave_id": 1,
+        "temp2_slave_id": 2,
+        "flow_slave_id": 3
+      },
+      "pos_x": 0.4133561108505839,
+      "pos_y": 0.29661016949152547
+    },
+    {
+      "id": 2,
+      "device_id": "GP_2",
+      "name": "지중배관_2",
+      "ip": "172.30.1.93",
+      "port": 8899,
+      "description": "지중배관 2",
+      "enabled": true,
+      "sensors": {
+        "temp1_slave_id": 1,
+        "temp2_slave_id": 2,
+        "flow_slave_id": 3
+      },
+      "pos_x": 0.5875371251200285,
+      "pos_y": 0.29661016949152547
+    },
+    {
+      "id": 7,
+      "device_id": "GP_7",
+      "name": "지중배관_7",
+      "ip": "172.30.1.99",
+      "port": 8899,
+      "description": "지중배관 7",
+      "enabled": true,
+      "sensors": {
+        "temp1_slave_id": 1,
+        "temp2_slave_id": 2,
+        "flow_slave_id": 3
+      },
+      "pos_x": 0.4146405841763248,
+      "pos_y": 0.49725731895223435
+    },
+    {
+      "id": 8,
+      "device_id": "GP_8",
+      "name": "지중배관_8",
+      "ip": "172.30.1.101",
+      "port": 8899,
+      "description": "지중배관 8",
+      "enabled": true,
+      "sensors": {
+        "temp1_slave_id": 1,
+        "temp2_slave_id": 2,
+        "flow_slave_id": 3
+      },
+      "pos_x": 0.5880391237355128,
+      "pos_y": 0.4972573189522342
+    },
+    {
+      "id": 9,
+      "device_id": "GP_9",
+      "name": "지중배관_9",
+      "ip": "172.30.1.102",
+      "port": 8899,
+      "description": "지중배관 9",
+      "enabled": true,
+      "sensors": {
+        "temp1_slave_id": 1,
+        "temp2_slave_id": 2,
+        "flow_slave_id": 3
+      },
+      "pos_x": 0.4128541122350997,
+      "pos_y": 0.8763174114021572
+    },
+    {
+      "device_id": "GP_10",
+      "name": "지중배관_10",
+      "ip": "172.30.1.103",
+      "port": 8899,
+      "description": "",
+      "enabled": true,
+      "sensors": {
+        "temp1_slave_id": 1,
+        "temp2_slave_id": 2,
+        "flow_slave_id": 3
+      },
+      "pos_x": 0.5845086085616669,
+      "pos_y": 0.8821571648690292,
+      "id": 8
+    },
+    {
+      "device_id": "GP_5",
+      "name": "지중배관_5",
+      "ip": "172.30.1.97",
+      "port": 8899,
+      "description": "",
+      "enabled": true,
+      "sensors": {
+        "temp1_slave_id": 1,
+        "temp2_slave_id": 2,
+        "flow_slave_id": 3
+      },
+      "pos_x": 0.4103275942922221,
+      "pos_y": 0.10711864406779675,
+      "id": 9
+    },
+    {
+      "device_id": "GP_6",
+      "name": "지중배관_6",
+      "ip": "172.30.1.98",
+      "port": 8899,
+      "description": "",
+      "enabled": true,
+      "sensors": {
+        "temp1_slave_id": 1,
+        "temp2_slave_id": 2,
+        "flow_slave_id": 3
+      },
+      "pos_x": 0.588081552444117,
+      "pos_y": 0.1055778120184901,
+      "id": 10
+    }
+  ],
+  "powermeter_groups": [
+    {
+      "group_id": "PMG_1",
+      "name": "전력량계",
+      "ip": "172.30.1.86",
+      "port": 8899,
+      "pos_x": 0.24530046224961477,
+      "pos_y": 0.8020030816640985,
+      "meters": [
+        {
+          "id": 31,
+          "device_id": "Total",
+          "name": "전체 전력량",
+          "slave_id": 31,
+          "enabled": true
+        },
+        {
+          "id": 11,
+          "device_id": "열풍기_1",
+          "name": "열풍기_1",
+          "slave_id": 11,
+          "enabled": true
+        },
+        {
+          "id": 12,
+          "device_id": "열풍기_2",
+          "name": "열풍기_2",
+          "slave_id": 12,
+          "enabled": true
+        },
+        {
+          "id": 13,
+          "device_id": "열풍기_3",
+          "name": "열풍기_3",
+          "slave_id": 13,
+          "enabled": true
+        },
+        {
+          "id": 14,
+          "device_id": "열풍기_4",
+          "name": "열풍기_4",
+          "slave_id": 14,
+          "enabled": true
+        },
+        {
+          "id": 15,
+          "device_id": "열풍기_5",
+          "name": "열풍기_5",
+          "slave_id": 15,
+          "enabled": true
+        },
+        {
+          "id": 16,
+          "device_id": "열풍기_6",
+          "name": "열풍기_6",
+          "slave_id": 16,
+          "enabled": true
+        },
+        {
+          "id": 1,
+          "device_id": "히트펌프_1",
+          "name": "히트펌프_1",
+          "slave_id": 1,
+          "enabled": true
+        },
+        {
+          "id": 2,
+          "device_id": "히트펌프_2",
+          "name": "히트펌프_2",
+          "slave_id": 2,
+          "enabled": true
+        },
+        {
+          "id": 3,
+          "device_id": "히트펌프_3",
+          "name": "히트펌프_3",
+          "slave_id": 3,
+          "enabled": true
+        },
+        {
+          "id": 4,
+          "device_id": "히트펌프_4",
+          "name": "히트펌프_4",
+          "slave_id": 4,
+          "enabled": true
+        }
+      ]
+    }
+  ]
+}

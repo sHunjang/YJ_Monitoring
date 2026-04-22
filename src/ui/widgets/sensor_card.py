@@ -11,7 +11,10 @@
 - 애니메이션 효과
 """
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QGraphicsDropShadowEffect
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QLabel,
+    QGraphicsDropShadowEffect, QSizePolicy
+)
 from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, pyqtProperty
 from PyQt6.QtGui import QColor
 
@@ -42,8 +45,14 @@ class SensorCard(QWidget):
     
     def init_ui(self):
         """UI 초기화"""
-        self.setMinimumSize(200, 150)
-        self.setMaximumSize(300, 200)
+        # ✅ 최소 크기만 설정 (최대 크기 제한 제거)
+        self.setMinimumSize(220, 140)
+        
+        # ✅ 크기 정책 설정
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Minimum
+        )
         
         # 배경 스타일
         self.setStyleSheet(f"""
@@ -57,7 +66,7 @@ class SensorCard(QWidget):
         # 레이아웃
         layout = QVBoxLayout()
         layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+        layout.setSpacing(10)
         
         # 제목
         self.title_label = QLabel(self.title)
@@ -70,6 +79,7 @@ class SensorCard(QWidget):
             }}
         """)
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title_label.setWordWrap(True)  # ✅ 제목 줄바꿈 허용
         layout.addWidget(self.title_label)
         
         # 구분선
@@ -82,20 +92,31 @@ class SensorCard(QWidget):
         """)
         layout.addWidget(divider)
         
-        # 값
+        # 값 레이블
         self.value_label = QLabel(self._value)
-        self.value_label.setFont(Theme.font(24, bold=True))
+        self.value_label.setFont(Theme.font(22, bold=True))
         self.value_label.setStyleSheet(f"""
             QLabel {{
                 color: {Theme.TEXT_PRIMARY};
                 background-color: transparent;
                 border: none;
+                padding: 10px 5px;
             }}
         """)
         self.value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.value_label.setWordWrap(False)  # 값은 한 줄로
+        self.value_label.setMinimumHeight(50)  # ✅ 최소 높이
+        
+        # ✅ 값 레이블 크기 정책
+        self.value_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Minimum
+        )
+        
         layout.addWidget(self.value_label)
         
-        layout.addStretch()
+        # ✅ stretch 제거 (값 레이블이 충분한 공간 확보)
+        # layout.addStretch() 제거
         
         self.setLayout(layout)
     
@@ -115,28 +136,22 @@ class SensorCard(QWidget):
         Args:
             value: 새 값
         """
+        old_value = self._value
         self._value = value
         self.value_label.setText(value)
         
-        # 값 변경 애니메이션
-        self.animate_value_change()
+        # ✅ 크기 재조정
+        # self.value_label.adjustSize()
+        
+        # ✅ 값이 실제로 변경되었을 때만 애니메이션
+        if old_value != value:
+            self.animate_value_change()
     
     def animate_value_change(self):
-        """값 변경 애니메이션"""
-        # 스케일 애니메이션
-        animation = QPropertyAnimation(self.value_label, b"geometry")
-        animation.setDuration(200)
-        animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
-        
-        # 현재 geometry
-        current_geo = self.value_label.geometry()
-        
-        # 약간 커졌다가 원래 크기로
-        start_geo = current_geo.adjusted(5, 5, -5, -5)
-        animation.setStartValue(start_geo)
-        animation.setEndValue(current_geo)
-        
-        animation.start()
+        """값 변경 애니메이션 - 단순화"""
+        # ✅ 애니메이션 제거 (geometry 애니메이션이 텍스트 잘림 문제 유발)
+        # 필요하면 opacity 애니메이션 등 다른 방식 사용
+        pass
     
     def set_color(self, color: str):
         """
@@ -194,7 +209,7 @@ class SensorCard(QWidget):
 # ==============================================
 if __name__ == "__main__":
     import sys
-    from PyQt6.QtWidgets import QApplication, QHBoxLayout, QMainWindow
+    from PyQt6.QtWidgets import QApplication, QHBoxLayout, QMainWindow, QWidget
     from PyQt6.QtCore import QTimer
     import random
     
@@ -202,20 +217,24 @@ if __name__ == "__main__":
         def __init__(self):
             super().__init__()
             self.setWindowTitle('SensorCard 테스트')
-            self.setMinimumSize(1000, 300)
+            self.setMinimumSize(1200, 300)
             
             # 중앙 위젯
             central = QWidget()
             layout = QHBoxLayout()
+            layout.setSpacing(15)
             
-            # 카드 생성
-            self.card1 = SensorCard('HP_1', '25.5°C', Theme.HEATPUMP_COLOR)
-            self.card2 = SensorCard('HP_2', '30.2°C', Theme.HEATPUMP_COLOR)
-            self.card3 = SensorCard('Total', '1234.5 kWh', Theme.POWER_COLOR)
+            # 카드 생성 - 긴 텍스트로 테스트
+            self.card1 = SensorCard('히트펌프_1', '25.5°C', Theme.HEATPUMP_COLOR)
+            self.card2 = SensorCard('지중배관_10', '30.2°C', Theme.PIPE_COLOR)
+            self.card3 = SensorCard('Total', '2621.48 kWh', Theme.POWER_COLOR)
+            self.card4 = SensorCard('열풍기_1', '1234.56 kWh', Theme.POWER_COLOR)
             
             layout.addWidget(self.card1)
             layout.addWidget(self.card2)
             layout.addWidget(self.card3)
+            layout.addWidget(self.card4)
+            layout.addStretch()  # 오른쪽 여백
             
             central.setLayout(layout)
             self.setCentralWidget(central)
@@ -229,11 +248,15 @@ if __name__ == "__main__":
             """값 업데이트 시뮬레이션"""
             temp1 = round(random.uniform(20.0, 30.0), 1)
             temp2 = round(random.uniform(25.0, 35.0), 1)
-            energy = round(random.uniform(1200.0, 1300.0), 1)
+            energy1 = round(random.uniform(2600.0, 2700.0), 2)
+            energy2 = round(random.uniform(1200.0, 1300.0), 2)
             
             self.card1.update_value(f'{temp1}°C')
             self.card2.update_value(f'{temp2}°C')
-            self.card3.update_value(f'{energy} kWh')
+            self.card3.update_value(f'{energy1} kWh')
+            self.card4.update_value(f'{energy2} kWh')
+            
+            print(f"Updated: {temp1}°C, {temp2}°C, {energy1} kWh, {energy2} kWh")
     
     app = QApplication(sys.argv)
     

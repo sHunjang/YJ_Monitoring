@@ -417,6 +417,99 @@ class UIDataService:
             return {'latest': 0.0, 'avg': 0.0, 'max': 0.0, 'min': 0.0, 'count': 0}
 
 
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # COP 계산용 범위 조회 (시작~끝 시각 지정)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    def get_timeseries_heatpump_range(
+        self,
+        device_id: str,
+        t_start: datetime,
+        t_end: datetime,
+        field: str = 't_in'
+    ) -> List[Dict]:
+        """
+        히트펌프 특정 시간 범위 시계열 조회 (COP 슬롯 계산용)
+
+        Args:
+            device_id: 장치 ID
+            t_start:   시작 시각 (포함)
+            t_end:     종료 시각 (포함)
+            field:     't_in' | 't_out' | 'flow'
+
+        Returns:
+            List[Dict]: [{'timestamp': datetime, 'value': float}, ...]
+        """
+        try:
+            field_mapping = {
+                't_in':  'input_temp',
+                't_out': 'output_temp',
+                'flow':  'flow',
+            }
+            db_field = field_mapping.get(field, field)
+
+            query = f"""
+                SELECT timestamp, {db_field}
+                FROM heatpump
+                WHERE device_id = %s
+                  AND timestamp >= %s
+                  AND timestamp <= %s
+                ORDER BY timestamp ASC
+            """
+            result = execute_query(query, (device_id, t_start, t_end), fetch_mode='all')
+            return [
+                {
+                    'timestamp': row['timestamp'],
+                    'value': float(row[db_field]) if row[db_field] is not None else None
+                }
+                for row in result
+                if row[db_field] is not None   # NULL 행 제외 (센서 누락 대응)
+            ]
+        except Exception as e:
+            logger.error(f"히트펌프 범위 조회 실패: {e}")
+            return []
+
+    def get_timeseries_power_range(
+        self,
+        device_id: str,
+        t_start: datetime,
+        t_end: datetime,
+    ) -> List[Dict]:
+        """
+        전력량계 특정 시간 범위 시계열 조회 (COP 슬롯 계산용)
+
+        Args:
+            device_id: elec 테이블의 device_id (예: '히트펌프_1')
+            t_start:   시작 시각 (포함)
+            t_end:     종료 시각 (포함)
+
+        Returns:
+            List[Dict]: [{'timestamp': datetime, 'value': float}, ...]
+              value = total_energy (누적값, 차분은 호출자에서 계산)
+        """
+        try:
+            query = """
+                SELECT timestamp, total_energy
+                FROM elec
+                WHERE device_id = %s
+                  AND timestamp >= %s
+                  AND timestamp <= %s
+                ORDER BY timestamp ASC
+            """
+            result = execute_query(query, (device_id, t_start, t_end), fetch_mode='all')
+            return [
+                {
+                    'timestamp': row['timestamp'],
+                    'value': float(row['total_energy']) if row['total_energy'] is not None else None
+                }
+                for row in result
+                if row['total_energy'] is not None
+            ]
+        except Exception as e:
+            logger.error(f"전력량계 범위 조회 실패: {e}")
+            return []
+
+
 # ==============================================
 # 테스트 코드
 # ==============================================

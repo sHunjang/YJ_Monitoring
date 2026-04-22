@@ -60,13 +60,13 @@ class Config:
         # 전력량계 설정
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # 전력량계 IP (모두 동일)
-        self.power_meter_ip = os.getenv('POWER_METER_IP', '192.168.1.200')
+        self.power_meter_ip = os.getenv('POWER_METER_IP', '172.30.1.86')
         
         # 전력량계 개수
         self.power_meter_count = int(os.getenv('POWER_METER_COUNT', '11'))
         
         # 시작 Slave ID
-        self.power_meter_start_slave_id = int(os.getenv('POWER_METER_START_SLAVE_ID', '1'))
+        self.power_meter_start_slave_id = int(os.getenv('POWER_METER_START_SLAVE_ID', '31'))
         
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # Modbus TCP 공통 설정

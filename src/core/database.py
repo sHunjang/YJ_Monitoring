@@ -227,7 +227,7 @@ def insert_heatpump_data(
             logger.debug(
                 f"[{device_id}] 히트펌프 데이터 저장: "
                 f"input_temp={input_temp}°C, output_temp={output_temp}°C, "
-                f"Flow={flow}L/min, Energy={energy}kWh"
+                f"Flow={flow}L, Energy={energy}kWh"
             )
             
             return True
@@ -329,7 +329,7 @@ def insert_groundpipe_data(
             
             logger.debug(
                 f"[{device_id}] 지중배관 데이터 저장: "
-                f"input_temp={input_temp}°C, output_temp={output_temp}°C, Flow={flow}L/min"
+                f"input_temp={input_temp}°C, output_temp={output_temp}°C, Flow={flow}L"
             )
             
             return True

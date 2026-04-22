@@ -153,7 +153,7 @@ class CSVExportService:
                 '측정시간',
                 '입구온도(°C)',
                 '출구온도(°C)',
-                '유량(L/min)',
+                '유량(L)',
                 '누적전력량(kWh)'
             ])
             
@@ -213,7 +213,7 @@ class CSVExportService:
                 '측정시간',
                 '입구온도(°C)',
                 '출구온도(°C)',
-                '유량(L/min)',
+                '유량(L)',
                 '누적전력량(kWh)'
             ])
             
@@ -351,7 +351,7 @@ class CSVExportService:
                 '측정시간',
                 '입구온도(°C)',
                 '출구온도(°C)',
-                '유량(L/min)'
+                '유량(L)'
             ])
             
             # 데이터
@@ -408,7 +408,7 @@ class CSVExportService:
                 '측정시간',
                 '입구온도(°C)',
                 '출구온도(°C)',
-                '유량(L/min)'
+                '유량(L)'
             ])
             
             # 데이터

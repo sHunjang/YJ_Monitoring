@@ -33,8 +33,8 @@ class Theme:
     
     # 텍스트색
     TEXT_PRIMARY = '#212121'    # 메인 텍스트 (거의 검정)
-    TEXT_SECONDARY = '#757575'  # 보조 텍스트 (회색)
-    TEXT_DISABLED = '#bdbdbd'   # 비활성 텍스트
+    TEXT_SECONDARY = "#383838"  # 보조 텍스트 (회색)
+    TEXT_DISABLED = "#1c1c1c"   # 비활성 텍스트
     
     # 센서 타입별 색상
     POWER_COLOR = '#1976d2'     # 전력 (파란색)
