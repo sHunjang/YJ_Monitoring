@@ -1,6 +1,6 @@
 {
   "comment": "센서 배치도 설정",
-  "last_updated": "2026-02-24T16:45:23.783719",
+  "last_updated": "2026-04-22T17:57:11.563201",
   "sensor_config": {
     "comment": "각 함의 센서 Slave ID 설정",
     "temp1_slave_id": 1,
