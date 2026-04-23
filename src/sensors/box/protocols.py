@@ -24,7 +24,7 @@ def parse_temperature(registers: list, index: int = 0):
             raw_value -= 0x10000
         temperature = raw_value * TEMPERATURE_SENSOR_PROTOCOL['scale']
         logger.debug(f"온도 파싱 [index={index}]: raw=0x{registers[index]:04X} → {temperature}°C")
-        return round(temperature, 2)
+        return round(temperature, 1)
     except Exception as e:
         logger.error(f"온도 센서 데이터 파싱 오류: {e}", exc_info=True)
         return None
