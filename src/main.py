@@ -275,4 +275,39 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # ── 크래시 방지 래퍼 ────────────────────────────────────
+    import traceback
+    import datetime as _dt
+    MAX_APP_RESTARTS = 5
+    restart_count = 0
+
+    while restart_count <= MAX_APP_RESTARTS:
+        try:
+            exit_code = main()
+            sys.exit(exit_code)
+        except SystemExit as e:
+            sys.exit(e.code)
+        except Exception as e:
+            restart_count += 1
+            tb = traceback.format_exc()
+            try:
+                crash_log = Path(project_root) / 'logs' / 'crash.log'
+                crash_log.parent.mkdir(exist_ok=True)
+                sep = '=' * 60
+                now = str(_dt.datetime.now())
+                with open(crash_log, 'a', encoding='utf-8') as f:
+                    f.write(sep + '\n')
+                    f.write('크래시 발생: ' + now + '\n')
+                    f.write('재시작 #' + str(restart_count) + '\n')
+                    f.write(tb + '\n')
+            except Exception:
+                pass
+
+            if restart_count > MAX_APP_RESTARTS:
+                print("프로그램이 " + str(MAX_APP_RESTARTS) + "회 재시작 후 중단됐습니다.")
+                print("logs/crash.log 를 확인하세요.")
+                sys.exit(1)
+
+            print("예상치 못한 오류로 재시작합니다 (#" + str(restart_count) + "/" + str(MAX_APP_RESTARTS) + ")...")
+            import time as _time
+            _time.sleep(3)

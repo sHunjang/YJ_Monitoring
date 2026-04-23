@@ -142,7 +142,7 @@ class MainWindow(QMainWindow):
 
         self._status_cache = {
             'local_db':  {'text': '🖥️ 로컬 DB  ● --',   'color': Theme.TEXT_SECONDARY},
-            'remote_db': {'text': '☁️ 외부 DB  ● --',   'color': Theme.TEXT_SECONDARY},
+            'remote_db': {'text': '☁️ 원격 DB  ● --',   'color': Theme.TEXT_SECONDARY},
             'sensor':    {'text': '📡 센서  ● --',        'color': Theme.TEXT_SECONDARY},
             'queue':     {'text': '📦 재전송: --건',      'color': Theme.TEXT_SECONDARY},
         }
@@ -215,7 +215,7 @@ class MainWindow(QMainWindow):
         sl.addWidget(self.status_local_db)
         sl.addWidget(self._sep())
 
-        self.status_remote_db = QLabel('☁️ 외부 DB  ● --')
+        self.status_remote_db = QLabel('☁️ 원격 DB  ● --')
         self.status_remote_db.setFont(Theme.font(10))
         sl.addWidget(self.status_remote_db)
         sl.addWidget(self._sep())
@@ -936,10 +936,10 @@ class MainWindow(QMainWindow):
         except Exception:
             new_cache['local_db'] = {'text': '🖥️ 로컬 DB  ● 연결 끊김', 'color': Theme.DANGER}
 
-        # 외부 DB
+        # 원격 DB
         config = get_config()
         if not config.db_remote_enabled:
-            new_cache['remote_db'] = {'text': '☁️ 외부 DB  ● 비활성', 'color': Theme.TEXT_SECONDARY}
+            new_cache['remote_db'] = {'text': '☁️ 원격 DB  ● 비활성', 'color': Theme.TEXT_SECONDARY}
         else:
             try:
                 conn = psycopg2.connect(
@@ -948,9 +948,9 @@ class MainWindow(QMainWindow):
                     password=config.db_remote_password, connect_timeout=3
                 )
                 conn.close()
-                new_cache['remote_db'] = {'text': '☁️ 외부 DB  ● 정상', 'color': Theme.SUCCESS}
+                new_cache['remote_db'] = {'text': '☁️ 원격 DB  ● 정상', 'color': Theme.SUCCESS}
             except Exception:
-                new_cache['remote_db'] = {'text': '☁️ 외부 DB  ● 연결 끊김', 'color': Theme.DANGER}
+                new_cache['remote_db'] = {'text': '☁️ 원격 DB  ● 연결 끊김', 'color': Theme.DANGER}
 
         if config.db_remote_enabled:
             AlarmService.get_instance().check_remote_db(

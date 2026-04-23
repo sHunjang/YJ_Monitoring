@@ -553,13 +553,13 @@ def get_all_power_meter_devices() -> List[str]:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 외부 DB 재전송 큐
+# 원격 DB 재전송 큐
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 _remote_connection_pool = None
 
 
 def _insert_remote(table_name: str, query: str, params: tuple):
-    """외부 DB에 데이터 저장. 실패 시 로컬 큐에 저장."""
+    """원격 DB에 데이터 저장. 실패 시 로컬 큐에 저장."""
     global _remote_connection_pool
     if _remote_connection_pool is None:
         _enqueue_failed(table_name, params)
@@ -574,7 +574,7 @@ def _insert_remote(table_name: str, query: str, params: tuple):
     except Exception as e:
         if conn:
             conn.rollback()
-        logger.warning(f"⚠ 외부 DB 저장 실패 → 큐 저장: {e}")
+        logger.warning(f"⚠ 원격 DB 저장 실패 → 큐 저장: {e}")
         _enqueue_failed(table_name, params)
     finally:
         if conn:
@@ -585,7 +585,7 @@ def _insert_remote(table_name: str, query: str, params: tuple):
 
 
 def _enqueue_failed(table_name: str, params: tuple):
-    """외부 저장 실패 데이터를 로컬 큐에 저장"""
+    """원격 저장 실패 데이터를 로컬 큐에 저장"""
     import json
     serialized = []
     for p in params:

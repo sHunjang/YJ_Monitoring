@@ -1,56 +1,59 @@
 # ==============================================
-# 통합 데이터 수집 서비스
+# 통합 데이터 수집 서비스 (안정성 강화 버전)
 # ==============================================
 """
 플라스틱 함 센서 + 전력량계 통합 데이터 수집 서비스
 
-주요 기능:
-1. 전력량계 먼저 수집
-2. 전력량계 데이터를 히트펌프 수집 시 결합
-3. 두 서비스의 통합 관리
-
-사용 예:
-    from services.data_collection_service import DataCollectionService
-    
-    service = DataCollectionService()
-    service.start()  # 모든 센서 수집 시작
-    service.stop()   # 모든 센서 수집 중지
+안정성 강화:
+1. Watchdog — 수집 루프가 멈추면 자동 재시작
+2. 장치별 독립 수집 — 한 장치 실패가 다른 장치에 영향 없음
+3. DB 연결 풀 자동 복구
+4. 전역 예외 핸들러 등록
+5. RemoteSyncService + AlarmService 통합
 """
 
 import logging
 import threading
 import time
+import sys
 from typing import Optional, Dict, Callable
 from datetime import datetime
 
 from sensors.box.service import BoxSensorService
 from sensors.power.service import PowerMeterService
+from services.remote_sync_service import RemoteSyncService
+from services.alarm_service import AlarmService
 from core.config import get_config
+from core.database import get_queue_count
 
 logger = logging.getLogger(__name__)
 
+# Watchdog 임계값 — 이 시간(초) 동안 수집이 없으면 루프 재시작
+WATCHDOG_TIMEOUT = 300   # 5분
+MAX_RESTART_COUNT = 10   # 최대 자동 재시작 횟수
+
 
 class DataCollectionService:
-    """
-    통합 데이터 수집 서비스
-    
-    플라스틱 함 센서와 전력량계를 통합 관리합니다.
-    전력량계 데이터를 먼저 수집하고, 이를 히트펌프 수집 시 활용합니다.
-    """
-    
+    """통합 데이터 수집 서비스 (안정성 강화)"""
+
     def __init__(self):
-        """초기화"""
         self.config = get_config()
-        
-        # 서비스 인스턴스
+
         self.power_meter_service = PowerMeterService()
-        self.box_sensor_service = BoxSensorService()
-        
-        # 통합 수집 스레드
+        self.box_sensor_service  = BoxSensorService()
+        self.remote_sync_service = RemoteSyncService()
+        self.alarm_service       = AlarmService.get_instance()
+
         self._thread: Optional[threading.Thread] = None
-        self._stop_event = threading.Event()
-        self._running = False
-        
+        self._watchdog_thread: Optional[threading.Thread] = None
+        self._stop_event   = threading.Event()
+        self._running      = False
+        self.interval      = 60
+
+        # Watchdog 상태
+        self._last_collection_time: Optional[float] = None
+        self._restart_count = 0
+
         # 통계
         self.stats = {
             'total_collections': 0,
@@ -58,340 +61,318 @@ class DataCollectionService:
             'failed_collections': 0,
             'last_collection_time': None,
             'last_success_time': None,
-            'last_error': None
+            'last_error': None,
+            'restart_count': 0,
         }
-        
-        # 콜백 함수
+
         self.on_collection_complete: Optional[Callable] = None
         self.on_collection_error: Optional[Callable] = None
-        
+
+        # 전역 예외 핸들러 등록
+        self._register_global_exception_handler()
+
         logger.info("DataCollectionService 초기화 완료")
-    
+
+    # ─────────────────────────────────────────
+    # 전역 예외 핸들러
+    # ─────────────────────────────────────────
+    def _register_global_exception_handler(self):
+        """처리되지 않은 예외를 로그로 남기고 프로그램이 죽지 않도록 등록"""
+
+        def handle_exception(exc_type, exc_value, exc_traceback):
+            if issubclass(exc_type, KeyboardInterrupt):
+                sys.__excepthook__(exc_type, exc_value, exc_traceback)
+                return
+            logger.critical(
+                "처리되지 않은 예외 발생",
+                exc_info=(exc_type, exc_value, exc_traceback)
+            )
+
+        def handle_thread_exception(args):
+            if args.exc_type == SystemExit:
+                return
+            logger.critical(
+                f"스레드 '{args.thread.name}' 처리되지 않은 예외",
+                exc_info=(args.exc_type, args.exc_value, args.exc_tb)
+            )
+
+        sys.excepthook = handle_exception
+        threading.excepthook = handle_thread_exception
+        logger.info("전역 예외 핸들러 등록 완료")
+
+    # ─────────────────────────────────────────
+    # 시작 / 종료
+    # ─────────────────────────────────────────
     def start(self, interval: Optional[int] = None):
-        """
-        통합 데이터 수집 시작
-        
-        Args:
-            interval: 수집 주기 (초), None이면 설정 파일 값 사용
-            
-        Example:
-            >>> service = DataCollectionService()
-            >>> service.start(interval=60)  # 60초마다 수집
-        """
         if self._running:
             logger.warning("이미 실행 중입니다.")
             return
-        
-        # 수집 주기 설정
-        if interval is None:
-            interval = self.config.collection_interval
-        
-        self.interval = interval
-        
-        # 스레드 시작
+
+        self.interval = interval or self.config.collection_interval
         self._stop_event.clear()
         self._running = True
-        
+        self._last_collection_time = time.time()
+
+        # 수집 스레드
         self._thread = threading.Thread(
             target=self._collection_loop,
             daemon=True,
             name="DataCollectionService"
         )
         self._thread.start()
-        
-        logger.info(f"DataCollectionService 시작 (주기: {interval}초)")
+
+        # Watchdog 스레드
+        self._watchdog_thread = threading.Thread(
+            target=self._watchdog_loop,
+            daemon=True,
+            name="CollectionWatchdog"
+        )
+        self._watchdog_thread.start()
+
+        # 외부 재전송 서비스
+        self.remote_sync_service.start()
+
+        logger.info(f"DataCollectionService 시작 (주기: {self.interval}초)")
         logger.info("=" * 70)
-    
+
     def stop(self):
-        """
-        통합 데이터 수집 중지
-        
-        Example:
-            >>> service.stop()
-        """
         if not self._running:
-            logger.warning("실행 중이 아닙니다.")
             return
-        
         logger.info("DataCollectionService 중지 요청")
-        
         self._stop_event.set()
         self._running = False
-        
-        # 스레드 종료 대기
+        self.remote_sync_service.stop()
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=5)
-        
+            self._thread.join(timeout=10)
         logger.info("DataCollectionService 중지 완료")
-    
+
+    # ─────────────────────────────────────────
+    # 수집 루프
+    # ─────────────────────────────────────────
     def _collection_loop(self):
-        """데이터 수집 루프 (백그라운드 스레드)"""
         logger.info("통합 데이터 수집 루프 시작")
-        
         while not self._stop_event.is_set():
             try:
-                # 데이터 수집 실행
                 self._collect_once()
-                
+                self._last_collection_time = time.time()
             except Exception as e:
-                logger.error(f"통합 데이터 수집 루프 오류: {e}", exc_info=True)
+                logger.error(f"수집 루프 오류: {e}", exc_info=True)
                 self.stats['last_error'] = str(e)
-                
                 if self.on_collection_error:
                     try:
                         self.on_collection_error(str(e))
-                    except:
+                    except Exception:
                         pass
-            
-            # 다음 수집까지 대기
             self._stop_event.wait(self.interval)
-        
         logger.info("통합 데이터 수집 루프 종료")
-    
+
+    # ─────────────────────────────────────────
+    # Watchdog 루프
+    # ─────────────────────────────────────────
+    def _watchdog_loop(self):
+        """수집 루프가 멈추면 자동 재시작"""
+        logger.info("Watchdog 시작")
+        while not self._stop_event.is_set():
+            time.sleep(30)  # 30초마다 체크
+            if not self._running:
+                break
+
+            # 수집 스레드 상태 체크
+            if self._thread and not self._thread.is_alive():
+                if self._restart_count >= MAX_RESTART_COUNT:
+                    logger.critical(
+                        f"수집 스레드 재시작 횟수 초과 ({MAX_RESTART_COUNT}회). "
+                        "수동 점검이 필요합니다."
+                    )
+                    self.alarm_service.add(
+                        'collection_thread_dead',
+                        'error',
+                        f'데이터 수집 스레드가 {MAX_RESTART_COUNT}회 재시작 후 중단됨 — 수동 점검 필요'
+                    )
+                    continue
+
+                logger.warning("수집 스레드가 종료됨 — 자동 재시작")
+                self._restart_count += 1
+                self.stats['restart_count'] = self._restart_count
+
+                self._thread = threading.Thread(
+                    target=self._collection_loop,
+                    daemon=True,
+                    name=f"DataCollectionService_restart{self._restart_count}"
+                )
+                self._thread.start()
+                logger.info(f"수집 스레드 재시작 완료 (#{self._restart_count})")
+                self.alarm_service.add(
+                    f'collection_restart_{self._restart_count}',
+                    'warning',
+                    f'데이터 수집 스레드 자동 재시작 (#{self._restart_count})'
+                )
+                continue
+
+            # 마지막 수집 시간 체크
+            if self._last_collection_time:
+                elapsed = time.time() - self._last_collection_time
+                if elapsed > WATCHDOG_TIMEOUT:
+                    logger.warning(
+                        f"마지막 수집 후 {elapsed:.0f}초 경과 — 수집 루프 응답 없음"
+                    )
+                    self.alarm_service.add(
+                        'collection_timeout',
+                        'warning',
+                        f'데이터 수집이 {elapsed/60:.0f}분간 중단됨 — 네트워크 또는 센서 확인 필요'
+                    )
+
+        logger.info("Watchdog 종료")
+
+    # ─────────────────────────────────────────
+    # 실제 수집
+    # ─────────────────────────────────────────
     def _collect_once(self):
-        """
-        한 번 통합 데이터 수집 실행
-        
-        수집 순서:
-        1. 전력량계 데이터 수집
-        2. 플라스틱 함 센서 수집 (전력량계 데이터 포함)
-        """
         start_time = time.time()
-        
+
         logger.info("=" * 70)
         logger.info("통합 데이터 수집 시작")
         logger.info("=" * 70)
-        
-        # 통계 업데이트
+
         self.stats['total_collections'] += 1
         self.stats['last_collection_time'] = datetime.now()
-        
+
         try:
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            # 1단계: 전력량계 데이터 수집
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # ── 1단계: 전력량계 ──────────────────────
             logger.info("[1/2] 전력량계 데이터 수집")
-            
-            power_meter_data = self.power_meter_service.collector.collect_all()
-            
-            power_success = sum(1 for v in power_meter_data.values() if v is not None)
-            logger.info(f"전력량계 수집 완료: {power_success}/{len(power_meter_data)}개")
-            
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            # 2단계: 플라스틱 함 센서 수집 (전력량계 데이터 포함)
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            try:
+                power_meter_data = self.power_meter_service.collector.collect_all()
+                power_success = sum(1 for v in power_meter_data.values() if v is not None)
+                logger.info(f"전력량계 수집 완료: {power_success}/{len(power_meter_data)}개")
+            except Exception as e:
+                logger.error(f"전력량계 수집 실패: {e}", exc_info=True)
+                power_meter_data = {}
+                power_success = 0
+
+            # ── 2단계: 박스 센서 (장치별 독립) ──────
             logger.info("[2/2] 플라스틱 함 센서 데이터 수집")
-            
-            box_results = self.box_sensor_service.collector.collect_all(power_meter_data)
-            
-            box_success = (
-                sum(1 for v in box_results['heatpump'].values() if v) +
-                sum(1 for v in box_results['groundpipe'].values() if v)
-            )
-            box_total = len(box_results['heatpump']) + len(box_results['groundpipe'])
-            
-            logger.info(f"플라스틱 함 센서 수집 완료: {box_success}/{box_total}개")
-            
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            # 통계 업데이트
-            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            try:
+                box_results = self.box_sensor_service.collector.collect_all(power_meter_data)
+                box_success = (
+                    sum(1 for v in box_results['heatpump'].values()
+                        if isinstance(v, dict) and v.get('success')) +
+                    sum(1 for v in box_results['groundpipe'].values()
+                        if isinstance(v, dict) and v.get('success'))
+                )
+                box_total = (
+                    len(box_results['heatpump']) + len(box_results['groundpipe'])
+                )
+                logger.info(f"플라스틱 함 센서 수집 완료: {box_success}/{box_total}개")
+            except Exception as e:
+                logger.error(f"박스 센서 수집 실패: {e}", exc_info=True)
+                box_results = {'heatpump': {}, 'groundpipe': {}}
+                box_success = 0
+
+            # ── DB 연결 풀 상태 체크 ─────────────────
+            self._check_db_pool()
+
+            # ── 알림 체크 ────────────────────────────
+            try:
+                self.alarm_service.check_collection_result({
+                    'box_sensor': box_results,
+                    'power_meter': power_meter_data
+                })
+                self.alarm_service.check_queue_size(get_queue_count())
+
+                for device_id, result in box_results.get('heatpump', {}).items():
+                    if isinstance(result, dict) and result.get('success'):
+                        self.alarm_service.check_flow_zero(
+                            device_id, 'heatpump', result.get('flow')
+                        )
+                for device_id, result in box_results.get('groundpipe', {}).items():
+                    if isinstance(result, dict) and result.get('success'):
+                        self.alarm_service.check_flow_zero(
+                            device_id, 'groundpipe', result.get('flow')
+                        )
+            except Exception as e:
+                logger.error(f"알림 체크 오류: {e}", exc_info=True)
+
+            # ── 통계 ─────────────────────────────────
             total_success = power_success + box_success
-            
             if total_success > 0:
                 self.stats['successful_collections'] += 1
                 self.stats['last_success_time'] = datetime.now()
+                # 수집 성공 시 watchdog 타임아웃 알림 해제
+                self.alarm_service.resolve('collection_timeout')
             else:
                 self.stats['failed_collections'] += 1
-            
-            elapsed_time = time.time() - start_time
-            
+
+            elapsed = time.time() - start_time
             logger.info("=" * 70)
             logger.info(
-                f"통합 데이터 수집 완료: "
-                f"전력량계 {power_success}개, "
-                f"플라스틱 함 {box_success}개, "
-                f"소요 시간: {elapsed_time:.2f}초"
+                f"수집 완료: 전력량계 {power_success}개, "
+                f"박스 센서 {box_success}개, 소요 {elapsed:.2f}초"
             )
             logger.info("=" * 70)
-            
-            # 콜백 호출 (UI 업데이트)
+
             if self.on_collection_complete:
                 try:
-                    result = {
+                    self.on_collection_complete({
                         'power_meter': power_meter_data,
                         'box_sensor': box_results,
-                        'elapsed_time': elapsed_time
-                    }
-                    self.on_collection_complete(result)
-                except:
+                        'elapsed_time': elapsed
+                    })
+                except Exception:
                     pass
-            
+
         except Exception as e:
             self.stats['failed_collections'] += 1
             self.stats['last_error'] = str(e)
-            
-            logger.error(f"통합 데이터 수집 실패: {e}", exc_info=True)
-            
+            logger.error(f"통합 수집 실패: {e}", exc_info=True)
             if self.on_collection_error:
                 try:
                     self.on_collection_error(str(e))
-                except:
+                except Exception:
                     pass
-    
+
+    # ─────────────────────────────────────────
+    # DB 연결 풀 자동 복구
+    # ─────────────────────────────────────────
+    def _check_db_pool(self):
+        """DB 연결 풀 상태 확인 및 자동 복구"""
+        try:
+            from core.database import test_db_connection, initialize_connection_pool
+            if not test_db_connection():
+                logger.warning("DB 연결 풀 이상 감지 — 재초기화 시도")
+                try:
+                    initialize_connection_pool()
+                    logger.info("DB 연결 풀 재초기화 성공")
+                    self.alarm_service.resolve('db_pool_error')
+                except Exception as e:
+                    logger.error(f"DB 연결 풀 재초기화 실패: {e}")
+                    self.alarm_service.add(
+                        'db_pool_error', 'error',
+                        f'로컬 DB 연결 풀 복구 실패 — 데이터 저장 불가: {e}'
+                    )
+        except Exception as e:
+            logger.error(f"DB 상태 체크 오류: {e}")
+
+    # ─────────────────────────────────────────
+    # 유틸리티
+    # ─────────────────────────────────────────
     def collect_now(self):
-        """
-        즉시 통합 데이터 수집 (수동 트리거)
-        
-        Example:
-            >>> service.collect_now()
-        """
-        logger.info("수동 통합 데이터 수집 트리거")
-        self._collect_once()
-    
+        logger.info("수동 수집 트리거")
+        threading.Thread(
+            target=self._collect_once, daemon=True, name="ManualCollection"
+        ).start()
+
     def is_running(self) -> bool:
-        """
-        실행 중인지 확인
-        
-        Returns:
-            bool: 실행 중이면 True
-        """
         return self._running
-    
+
     def get_stats(self) -> Dict:
-        """
-        통계 정보 반환
-        
-        Returns:
-            dict: 통계 정보
-        """
         return self.stats.copy()
-    
+
     def get_all_stats(self) -> Dict:
-        """
-        모든 서비스의 통계 정보 반환
-        
-        Returns:
-            dict: {
-                'integrated': {...},
-                'power_meter': {...},
-                'box_sensor': {...}
-            }
-        """
         return {
             'integrated': self.get_stats(),
             'power_meter': self.power_meter_service.get_stats(),
             'box_sensor': self.box_sensor_service.get_stats()
         }
-    
-    def reset_stats(self):
-        """모든 통계 초기화"""
-        self.stats = {
-            'total_collections': 0,
-            'successful_collections': 0,
-            'failed_collections': 0,
-            'last_collection_time': None,
-            'last_success_time': None,
-            'last_error': None
-        }
-        self.power_meter_service.reset_stats()
-        self.box_sensor_service.reset_stats()
-        logger.info("모든 통계 초기화")
-    
+
     def reload_config(self):
-        """
-        설정 파일 다시 로드
-        
-        사용자가 설정을 변경한 후 호출합니다.
-        """
-        logger.info("설정 다시 로드")
         self.power_meter_service.reload_config()
-        # box_sensor_service는 매번 설정을 읽으므로 reload 불필요
-    
-    def get_latest_power_meter_data(self) -> Optional[Dict[str, float]]:
-        """
-        최신 전력량계 데이터 조회
-        
-        Returns:
-            dict: {device_id: energy (kWh)}
-        """
-        return self.power_meter_service.get_latest_data()
-
-
-# ==============================================
-# 테스트 코드
-# ==============================================
-if __name__ == "__main__":
-    """DataCollectionService 테스트"""
-    import sys
-    from pathlib import Path
-    
-    current_file = Path(__file__).resolve()
-    project_root = current_file.parent.parent.parent
-    sys.path.insert(0, str(project_root / 'src'))
-    
-    from core.logging_config import setup_logging
-    from core.database import initialize_connection_pool
-    
-    setup_logging(log_level="INFO")
-    
-    print("=" * 70)
-    print("DataCollectionService 테스트")
-    print("=" * 70)
-    
-    # 데이터베이스 초기화
-    initialize_connection_pool()
-    
-    # Service 생성
-    service = DataCollectionService()
-    
-    # 콜백 설정
-    def on_complete(result):
-        print("\n✓ 통합 수집 완료 콜백")
-        print(f"  전력량계: {len(result['power_meter'])}개")
-        print(f"  히트펌프: {len(result['box_sensor']['heatpump'])}개")
-        print(f"  지중배관: {len(result['box_sensor']['groundpipe'])}개")
-        print(f"  소요 시간: {result['elapsed_time']:.2f}초")
-    
-    def on_error(error_msg):
-        print(f"\n✗ 오류 콜백: {error_msg}")
-    
-    service.on_collection_complete = on_complete
-    service.on_collection_error = on_error
-    
-    # 즉시 수집 테스트
-    print("\n[테스트 1] 즉시 통합 수집")
-    service.collect_now()
-    
-    # 통계 확인
-    print("\n[테스트 2] 통계 확인")
-    all_stats = service.get_all_stats()
-    
-    print("  통합 서비스:")
-    print(f"    총 수집: {all_stats['integrated']['total_collections']}")
-    print(f"    성공: {all_stats['integrated']['successful_collections']}")
-    
-    print("  전력량계 서비스:")
-    print(f"    총 수집: {all_stats['power_meter']['total_collections']}")
-    
-    print("  플라스틱 함 서비스:")
-    print(f"    총 수집: {all_stats['box_sensor']['total_collections']}")
-    
-    # 백그라운드 수집 테스트
-    print("\n[테스트 3] 백그라운드 수집 (30초 간격, 2회)")
-    service.start(interval=30)
-    
-    print("  실행 중... (60초 대기)")
-    time.sleep(60)
-    
-    service.stop()
-    
-    # 최종 통계
-    print("\n[최종 통계]")
-    stats = service.get_stats()
-    print(f"  총 수집 횟수: {stats['total_collections']}")
-    print(f"  성공 횟수: {stats['successful_collections']}")
-    print(f"  실패 횟수: {stats['failed_collections']}")
-    
-    print("\n" + "=" * 70)
-    print("✓ 테스트 완료")
-    print("=" * 70)
