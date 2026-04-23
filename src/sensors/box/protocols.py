@@ -40,7 +40,7 @@ def parse_flow(registers: list):
         raw_value = (low_word << 16) | high_word
         flow_rate = raw_value * FLOW_SENSOR_PROTOCOL['scale']
         logger.debug(f"유량 파싱: raw=0x{high_word:04X}{low_word:04X} ({raw_value}) → {flow_rate} L")
-        return round(flow_rate, 2)
+        return int(flow_rate)
     except Exception as e:
         logger.error(f"유량 센서 데이터 파싱 오류: {e}", exc_info=True)
         return None
