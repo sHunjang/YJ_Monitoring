@@ -140,44 +140,44 @@ class AlarmService:
     # 수집 결과 기반 알림 체크
     # ─────────────────────────────────────────────
     def check_collection_result(self, results: dict):
-        """
-        데이터 수집 결과를 받아 알림 조건 체크
+        from services.config_service import ConfigService
+        config_svc = ConfigService()
 
-        Args:
-            results: DataCollectionService._collect_once()의 결과
-                {
-                    'box_sensor': {
-                        'heatpump':  {device_id: bool},
-                        'groundpipe': {device_id: bool}
-                    },
-                    'power_meter': {device_id: PowerMeterData | None}
-                }
-        """
-        box = results.get('box_sensor', {})
+        box   = results.get('box_sensor', {})
+        power = results.get('power_meter', {})
 
-        # 히트펌프 수집 실패
-        for device_id, result in box.get('heatpump', {}).items():
+        all_hp = [d['device_id'] for d in config_svc.get_heatpump_ips()]
+        all_gp = [d['device_id'] for d in config_svc.get_groundpipe_ips()]
+        all_pm = [m['device_id'] for m in config_svc.get_all_power_meter_devices()]
+
+        hp_results = box.get('heatpump', {})
+        gp_results = box.get('groundpipe', {})
+
+        # 히트펌프
+        for device_id in all_hp:
             key = f'{device_id}_collect_fail'
-            if not result.get('success'):
+            result = hp_results.get(device_id)
+            if result is None or not result.get('success'):
                 self.add(key, 'error', f'[히트펌프] {device_id} 데이터 수집 실패')
             else:
                 self.resolve(key)
 
-        for device_id, result in box.get('groundpipe', {}).items():
+        # 지중배관
+        for device_id in all_gp:
             key = f'{device_id}_collect_fail'
-            if not result.get('success'):
+            result = gp_results.get(device_id)
+            if result is None or not result.get('success'):
                 self.add(key, 'error', f'[지중배관] {device_id} 데이터 수집 실패')
             else:
                 self.resolve(key)
 
-    def check_queue_size(self, queue_count: int):
-        """재전송 큐 크기 알림 체크"""
-        key = 'remote_queue_overflow'
-        if queue_count >= 50:
-            self.add(key, 'warning',
-                     f'재전송 대기 큐 {queue_count}건 — 외부 DB 연결을 확인하세요')
-        else:
-            self.resolve(key)
+        # 전력량계
+        for device_id in all_pm:
+            key = f'{device_id}_collect_fail'
+            if power.get(device_id) is None:
+                self.add(key, 'warning', f'[전력량계] {device_id} 데이터 수집 실패')
+            else:
+                self.resolve(key)
 
     def check_remote_db(self, is_connected: bool):
         """외부 DB 연결 상태 알림 체크"""

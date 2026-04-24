@@ -56,12 +56,6 @@ class UIDataService:
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     
     def get_all_heatpump_devices(self) -> List[str]:
-        """
-        모든 히트펌프 장치 ID 조회
-        
-        Returns:
-            List[str]: 장치 ID 리스트 (예: ['HP_1', 'HP_2', ...])
-        """
         try:
             query = """
                 SELECT DISTINCT device_id
@@ -69,18 +63,16 @@ class UIDataService:
                 ORDER BY device_id
             """
             result = execute_query(query, fetch_mode='all')
-            return [row['device_id'] for row in result]
+            devices = [row['device_id'] for row in result]
+
+            # 숫자 기준 정렬 (HP_1, HP_2, HP_3, HP_4)
+            devices.sort(key=lambda x: int(x.split('_')[-1]) if x.split('_')[-1].isdigit() else 0)
+            return devices
         except Exception as e:
             logger.error(f"히트펌프 장치 목록 조회 실패: {e}")
             return []
     
     def get_all_groundpipe_devices(self) -> List[str]:
-        """
-        모든 지중배관 장치 ID 조회
-        
-        Returns:
-            List[str]: 장치 ID 리스트 (예: ['GP_1', 'GP_2', ...])
-        """
         try:
             query = """
                 SELECT DISTINCT device_id
@@ -88,7 +80,11 @@ class UIDataService:
                 ORDER BY device_id
             """
             result = execute_query(query, fetch_mode='all')
-            return [row['device_id'] for row in result]
+            devices = [row['device_id'] for row in result]
+
+            # 숫자 기준 정렬 (GP_1, GP_2, ... GP_10)
+            devices.sort(key=lambda x: int(x.split('_')[-1]) if x.split('_')[-1].isdigit() else 0)
+            return devices
         except Exception as e:
             logger.error(f"지중배관 장치 목록 조회 실패: {e}")
             return []

@@ -296,6 +296,23 @@ class MainWindow(QMainWindow):
         left_col = QVBoxLayout()
         left_col.setSpacing(12)
 
+        # 온도 추이 차트 위에 추가
+        dash_ctrl = QHBoxLayout()
+        dash_ctrl.setSpacing(8)
+
+        dash_dev_label = QLabel('장치 선택:')
+        dash_dev_label.setFont(Theme.font(10))
+        dash_dev_label.setStyleSheet(f'color: {Theme.TEXT_SECONDARY}; border: none;')
+        dash_ctrl.addWidget(dash_dev_label)
+
+        self.dash_device_combo = QComboBox()
+        self.dash_device_combo.setFont(Theme.font(10))
+        self.dash_device_combo.setMinimumWidth(150)
+        self.dash_device_combo.currentTextChanged.connect(self._on_dash_device_changed)
+        dash_ctrl.addWidget(self.dash_device_combo)
+        dash_ctrl.addStretch()
+        left_col.addLayout(dash_ctrl)  # ← 차트 추가 전에 먼저 추가
+
         # 온도 추이 차트
         self.dash_chart = ChartWidget('온도 센서 데이터 추이')
         self.dash_chart.set_labels(y_label='°C')
@@ -434,6 +451,18 @@ class MainWindow(QMainWindow):
         layout.addLayout(content_row)
         widget.setLayout(layout)
         return widget
+
+    def _on_dash_device_changed(self, device_id: str):
+        if not device_id:
+            return
+        self.dash_chart.clear()
+        for field, color, name in [
+            ('t_in',  Theme.HEATPUMP_COLOR, '입구 온도'),
+            ('t_out', Theme.PRIMARY,        '출구 온도'),
+        ]:
+            data = self.data_service.get_timeseries_heatpump(device_id, hours=1, field=field)
+            if data:
+                self.dash_chart.add_line(f'dash_{field}', data, color=color, name=name)
 
     # ─────────────────────────────────────────
     # 히트펌프 탭
@@ -882,14 +911,25 @@ class MainWindow(QMainWindow):
         self.card_system.update_value(sys_status)
 
         # 대시보드 차트 — 온라인 히트펌프 입구온도 표시
-        for device_id in hp_devices[:4]:
-            data = self.data_service.get_timeseries_heatpump(device_id, hours=1, field='t_in')
-            if data:
-                key = f'dash_{device_id}'
-                if key in self.dash_chart.plot_lines:
-                    self.dash_chart.update_line(key, data)
-                else:
-                    self.dash_chart.add_line(key, data, name=f'{device_id} 입구온도')
+        if hp_devices and self.dash_device_combo.count() == 0:
+            self.dash_device_combo.blockSignals(True)
+            self.dash_device_combo.clear()
+            self.dash_device_combo.addItems(hp_devices)
+            self.dash_device_combo.blockSignals(False)
+
+        selected_dash = self.dash_device_combo.currentText()
+        if selected_dash and selected_dash in hp_devices:
+            for field, color, name in [
+                ('t_in',  Theme.HEATPUMP_COLOR, '입구 온도'),
+                ('t_out', Theme.PRIMARY,        '출구 온도'),
+            ]:
+                data = self.data_service.get_timeseries_heatpump(selected_dash, hours=1, field=field)
+                if data:
+                    key = f'dash_{field}'
+                    if key in self.dash_chart.plot_lines:
+                        self.dash_chart.update_line(key, data)
+                    else:
+                        self.dash_chart.add_line(key, data, color=color, name=name)
 
         # 게이지 — 첫 번째 온라인 히트펌프 기준
         gauge_dev = hp_devices[0] if hp_devices else (all_hp[0] if all_hp else None)
