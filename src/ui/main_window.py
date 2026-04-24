@@ -522,16 +522,29 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
 
-        self.power_cards = []
+        # ── 장치 선택 드롭다운 ──
+        ctrl = QHBoxLayout()
+        device_label = QLabel('장치 선택:')
+        device_label.setFont(Theme.font(12, bold=True))
+        ctrl.addWidget(device_label)
+
+        self.power_device_combo = QComboBox()
+        self.power_device_combo.setFont(Theme.font(11))
+        self.power_device_combo.setMinimumWidth(200)
+        self.power_device_combo.currentTextChanged.connect(self.on_power_device_changed)
+        ctrl.addWidget(self.power_device_combo)
+        ctrl.addStretch()
+        layout.addLayout(ctrl)
+
+        # ── 센서 카드 (전력량 단일 카드) ──
         cards = QHBoxLayout()
         cards.setSpacing(12)
-        devices = self.data_service.get_all_power_devices()
-        for device_id in devices[:4]:
-            card = SensorCard(device_id, '0.0 kWh', Theme.POWER_COLOR)
-            self.power_cards.append(card)
-            cards.addWidget(card)
+        self.power_card_energy = SensorCard('누적 전력량', '0.0 kWh', Theme.POWER_COLOR)
+        cards.addWidget(self.power_card_energy)
+        cards.addStretch()
         layout.addLayout(cards)
 
+        # ── 차트 ──
         self.power_chart = ChartWidget('전력량 추이')
         self.power_chart.set_labels(y_label='전력량 (kWh)')
         self.power_chart.time_range_changed.connect(self._on_power_period_changed)
@@ -539,6 +552,20 @@ class MainWindow(QMainWindow):
 
         widget.setLayout(layout)
         return widget
+
+    def on_power_device_changed(self, device_id: str):
+        if not device_id:
+            return
+        hours = self._pw_hours()
+        try:
+            stats = self.data_service.get_statistics_power(device_id, hours=hours)
+            self.power_card_energy.update_value(f"{stats['latest']:.2f} kWh")
+            self.power_chart.clear()
+            data = self.data_service.get_timeseries_power(device_id, hours=hours)
+            if data:
+                self.power_chart.add_line(device_id, data, name=f'{device_id} 전력량')
+        except Exception as e:
+            logger.error(f"전력량계 장치 변경 오류: {e}", exc_info=True)
 
     # ─────────────────────────────────────────
     # 메뉴바
@@ -637,15 +664,9 @@ class MainWindow(QMainWindow):
 
     def _on_gp_period_changed(self, minutes: int):
         self.on_gp_device_changed(self.gp_device_combo.currentText())
-
+        
     def _on_power_period_changed(self, minutes: int):
-        hours = self.power_chart.current_time_range
-        power_devices = self.data_service.get_all_power_devices()
-        self.power_chart.clear()
-        for device_id in power_devices[:4]:
-            data = self.data_service.get_timeseries_power(device_id, hours=hours)
-            if data:
-                self.power_chart.add_line(device_id, data, name=f'{device_id} 전력량')
+        self.on_power_device_changed(self.power_device_combo.currentText())
 
     # ─────────────────────────────────────────
     # 데이터 갱신
@@ -675,7 +696,7 @@ class MainWindow(QMainWindow):
                 self.cop_tab.refresh()
 
             # ── 공통 (항상 실행) ───────────────────
-            self._update_dropdowns(hp_devices, gp_devices)
+            self._update_dropdowns(hp_devices, gp_devices, power_devices)
             self.status_label.setText('● 연결됨')
             self.status_label.setStyleSheet(f'color: {Theme.SUCCESS};')
             self._apply_status_cache()
@@ -688,7 +709,7 @@ class MainWindow(QMainWindow):
             self.status_local_db.setText('🖥️ 로컬 DB  ● 연결 끊김')
             self.status_local_db.setStyleSheet(f'color: {Theme.DANGER};')
 
-    def _update_dropdowns(self, hp_devices, gp_devices):
+    def _update_dropdowns(self, hp_devices, gp_devices, power_devices):
         """드롭다운 장치 목록만 갱신 (쿼리 없음)"""
         current_hp = [self.hp_device_combo.itemText(i)
                     for i in range(self.hp_device_combo.count())]
@@ -789,38 +810,56 @@ class MainWindow(QMainWindow):
                     
         if ts_in:
             lt = ts_in[-1]['timestamp']
-            if self.last_log_timestamps.get(f'HP_{selected_gp}') != lt:
-                self.log_viewer.add_sensor_data_log(lt, 'HP', selected_gp, {
+            if self.last_log_timestamps.get(f'GP_{selected_gp}') != lt:
+                self.log_viewer.add_sensor_data_log(lt, 'GP', selected_gp, {
                     'input_temp':  stats['t_in']['latest'],
                     'output_temp': stats['t_out']['latest'],
                     'flow':        stats['flow']['latest']
                 })
-                self.last_log_timestamps[f'HP_{selected_gp}'] = lt
+                self.last_log_timestamps[f'GP_{selected_gp}'] = lt
 
     def _update_power_tab(self, power_devices):
         """전력량계 탭 갱신"""
+        # 드롭다운 갱신
+        current_pw = [self.power_device_combo.itemText(i)
+                    for i in range(self.power_device_combo.count())]
+        if current_pw != power_devices:
+            sel = self.power_device_combo.currentText()
+            self.power_device_combo.blockSignals(True)
+            self.power_device_combo.clear()
+            self.power_device_combo.addItems(power_devices)
+            if sel in power_devices:
+                self.power_device_combo.setCurrentText(sel)
+            elif power_devices:
+                self.power_device_combo.setCurrentIndex(0)
+            self.power_device_combo.blockSignals(False)
+
+        selected_pw = self.power_device_combo.currentText()
         hours_pw = self._pw_hours()
-        for i, card in enumerate(self.power_cards):
-            if i < len(power_devices):
-                device_id = power_devices[i]
-                stats = self.data_service.get_statistics_power(device_id, hours=hours_pw)
-                card.update_value(f"{stats['latest']:.2f} kWh")
-                ts_data = self.data_service.get_timeseries_power(device_id, hours=hours_pw)
-                if ts_data:
-                    lt = ts_data[-1]['timestamp']
-                    if self.last_log_timestamps.get(f'ELEC_{device_id}') != lt:
-                        self.log_viewer.add_sensor_data_log(
-                            lt, 'ELEC', device_id,
-                            {'total_energy': ts_data[-1]['value']}
-                        )
-                        self.last_log_timestamps[f'ELEC_{device_id}'] = lt
-        for device_id in power_devices[:4]:
-            data = self.data_service.get_timeseries_power(device_id, hours=hours_pw)
-            if data:
-                if device_id in self.power_chart.plot_lines:
-                    self.power_chart.update_line(device_id, data)
-                else:
-                    self.power_chart.add_line(device_id, data, name=f'{device_id} 전력량')
+        if not selected_pw:
+            return
+
+        stats = self.data_service.get_statistics_power(selected_pw, hours=hours_pw)
+        self.power_card_energy.update_value(f"{stats['latest']:.2f} kWh")
+
+        data = self.data_service.get_timeseries_power(selected_pw, hours=hours_pw)
+        if data:
+            key = selected_pw
+            if key in self.power_chart.plot_lines:
+                self.power_chart.update_line(key, data)
+            else:
+                self.power_chart.clear()
+                self.power_chart.add_line(key, data, name=f'{selected_pw} 전력량')
+
+        # 로그
+        if data:
+            lt = data[-1]['timestamp']
+            if self.last_log_timestamps.get(f'ELEC_{selected_pw}') != lt:
+                self.log_viewer.add_sensor_data_log(
+                    lt, 'ELEC', selected_pw,
+                    {'total_energy': data[-1]['value']}
+                )
+                self.last_log_timestamps[f'ELEC_{selected_pw}'] = lt
             
     # ─────────────────────────────────────────
     # 대시보드 갱신

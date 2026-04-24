@@ -392,49 +392,80 @@ class CopTabWidget(QWidget):
     # COP 시계열 계산
     # ─────────────────────────────────────────────
     def _calc_cop_series(self, hp_device: str, total_hours: int) -> List[Dict]:
+        """전체 기간 데이터를 한 번에 조회 후 슬롯별 계산"""
         elec_device = HP_TO_ELEC.get(hp_device)
         if not elec_device:
             return []
-        now = datetime.now()
+
+        now     = datetime.now()
+        t_start = now - timedelta(hours=total_hours)
+
+        # ── 전체 기간 데이터 1회 조회 (4쿼리) ──
+        t_in_rows  = self.data_service.get_timeseries_heatpump_range(
+            hp_device, t_start, now, 't_in')
+        t_out_rows = self.data_service.get_timeseries_heatpump_range(
+            hp_device, t_start, now, 't_out')
+        flow_rows  = self.data_service.get_timeseries_heatpump_range(
+            hp_device, t_start, now, 'flow')
+        elec_rows  = self.data_service.get_timeseries_power_range(
+            elec_device, t_start, now)
+
+        if not t_in_rows or not t_out_rows or not flow_rows or not elec_rows:
+            return []
+
+        # ── Python에서 슬롯별 분리 ──────────────
         results = []
         for slot in range(total_hours):
-            t_end   = now - timedelta(hours=slot)
-            t_start = now - timedelta(hours=slot + 1)
-            p = self._calc_one_slot(hp_device, elec_device, t_start, t_end, t_start)
+            slot_end   = now - timedelta(hours=slot)
+            slot_start = now - timedelta(hours=slot + 1)
+
+            p = self._calc_one_slot_from_data(
+                t_in_rows, t_out_rows, flow_rows, elec_rows,
+                slot_start, slot_end
+            )
             if p:
                 results.append(p)
+
         results.sort(key=lambda x: x['timestamp'])
         return results
 
-    def _calc_one_slot(
+
+    def _calc_one_slot_from_data(
         self,
-        hp_device: str,
-        elec_device: str,
+        t_in_rows: List[Dict],
+        t_out_rows: List[Dict],
+        flow_rows: List[Dict],
+        elec_rows: List[Dict],
         t_start: datetime,
         t_end: datetime,
-        slot_ts: datetime,
     ) -> Optional[Dict]:
+        """미리 조회된 데이터에서 슬롯 범위만 필터링하여 COP 계산"""
 
-        t_in_rows  = self.data_service.get_timeseries_heatpump_range(hp_device, t_start, t_end, 't_in')
-        t_out_rows = self.data_service.get_timeseries_heatpump_range(hp_device, t_start, t_end, 't_out')
-        if not t_in_rows or not t_out_rows:
+        def _filter(rows):
+            return [r for r in rows
+                    if t_start <= r['timestamp'] <= t_end]
+
+        s_in   = _filter(t_in_rows)
+        s_out  = _filter(t_out_rows)
+        s_flow = _filter(flow_rows)
+        s_elec = _filter(elec_rows)
+
+        if not s_in or not s_out:
             return None
 
-        avg_t_in  = sum(r['value'] for r in t_in_rows)  / len(t_in_rows)
-        avg_t_out = sum(r['value'] for r in t_out_rows) / len(t_out_rows)
+        avg_t_in  = sum(r['value'] for r in s_in)  / len(s_in)
+        avg_t_out = sum(r['value'] for r in s_out) / len(s_out)
         delta_t   = avg_t_in - avg_t_out
 
-        flow_rows = self.data_service.get_timeseries_heatpump_range(hp_device, t_start, t_end, 'flow')
-        if not flow_rows or len(flow_rows) < 2:
+        if not s_flow or len(s_flow) < 2:
             return None
-        flow_diff = flow_rows[-1]['value'] - flow_rows[0]['value']
+        flow_diff = s_flow[-1]['value'] - s_flow[0]['value']
         if flow_diff <= 0:
             return None
 
-        elec_rows = self.data_service.get_timeseries_power_range(elec_device, t_start, t_end)
-        if not elec_rows or len(elec_rows) < 2:
+        if not s_elec or len(s_elec) < 2:
             return None
-        power_kwh = elec_rows[-1]['value'] - elec_rows[0]['value']
+        power_kwh = s_elec[-1]['value'] - s_elec[0]['value']
         if power_kwh <= 0:
             return None
 
@@ -445,7 +476,7 @@ class CopTabWidget(QWidget):
         cop = heat_kcal / 860.0 / power_kwh
 
         return {
-            'timestamp': slot_ts,
+            'timestamp': t_start,
             'cop':       round(cop, 2),
             'avg_t_in':  round(avg_t_in, 2),
             'avg_t_out': round(avg_t_out, 2),
@@ -481,7 +512,7 @@ class CopTabWidget(QWidget):
             return
         ts = [p['timestamp'] for p in points]
         self.chart.add_series('cop',   ts, [p['cop']       for p in points], COLOR_COP,   'COP',         width=3)
-        # self.chart.add_series('t_in',  ts, [p['avg_t_in']  for p in points], COLOR_T_IN,  '입구온도(°C)', width=2)
-        # self.chart.add_series('t_out', ts, [p['avg_t_out'] for p in points], COLOR_T_OUT, '출구온도(°C)', width=2)
-        # self.chart.add_series('power', ts, [p['power_kwh'] for p in points], COLOR_POWER, '전력량(kWh)',  width=2, dashed=True)
-        # self.chart.add_series('flow',  ts, [p['flow_diff'] for p in points], COLOR_FLOW,  '유량(L)',      width=2, dashed=True)
+        self.chart.add_series('t_in',  ts, [p['avg_t_in']  for p in points], COLOR_T_IN,  '입구온도(°C)', width=2)
+        self.chart.add_series('t_out', ts, [p['avg_t_out'] for p in points], COLOR_T_OUT, '출구온도(°C)', width=2)
+        self.chart.add_series('power', ts, [p['power_kwh'] for p in points], COLOR_POWER, '전력량(kWh)',  width=2, dashed=True)
+        self.chart.add_series('flow',  ts, [p['flow_diff'] for p in points], COLOR_FLOW,  '유량(L)',      width=2, dashed=True)
