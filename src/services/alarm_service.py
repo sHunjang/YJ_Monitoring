@@ -204,3 +204,12 @@ class AlarmService:
                      f'[{type_kr}] {device_id} 유량 0 — 센서 또는 배관 확인 필요')
         else:
             self.resolve(key)
+            
+    def check_queue_size(self, count: int):
+        """재전송 큐 크기 체크"""
+        key = 'queue_overflow'
+        if count >= 50:
+            self.add(key, 'warning',
+                    f'재전송 큐 {count}건 — 원격 DB 연결 확인 필요')
+        else:
+            self.resolve(key)

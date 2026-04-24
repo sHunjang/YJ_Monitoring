@@ -163,3 +163,10 @@ class GaugeGroup(QWidget):
     def update_gauge(self, key: str, value: float):
         if key in self.gauges:
             self.gauges[key].update_value(value)
+
+    def clear_gauges(self):
+        """게이지 전체 제거"""
+        for key in list(self.gauges.keys()):
+            widget = self.gauges.pop(key)
+            self.layout_.removeWidget(widget)
+            widget.deleteLater()
