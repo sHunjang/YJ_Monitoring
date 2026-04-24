@@ -76,7 +76,7 @@ net start postgresql-x64-16
 
 ```env
 DB_REMOTE_ENABLED=true
-DB_REMOTE_HOST=14.42.171.209      # 클라이언트 공인 IP
+DB_REMOTE_HOST=[클라이언트 공인 IP]
 DB_REMOTE_PORT=5432
 DB_REMOTE_NAME=DB_NAME
 DB_REMOTE_USER=postgres
@@ -90,7 +90,7 @@ DB_REMOTE_PASSWORD=****
 ## 접속 확인 (서버 PC에서 테스트)
 
 ```powershell
-psql -h 14.42.171.209 -p 5432 -U postgres -d DB_NAME
+psql -h [클라이언트 PC IP 주소] -p 5432 -U postgres -d DB_NAME
 ```
 
 접속 성공 시 연동 준비 완료
