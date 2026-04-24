@@ -4,106 +4,86 @@
 -- 데이터베이스: sensor_yeoju
 -- 인코딩: UTF-8
 -- 실행: psql -U postgres -d sensor_yeoju -f sql/init.sql
+-- 주의: 기존 테이블이 있으면 건드리지 않음 (데이터 보존)
 
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- 1. 기존 테이블 삭제 (주의: 데이터 손실!)
+-- 1. 히트펌프 데이터 테이블
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-DROP TABLE IF EXISTS heatpump CASCADE;
-DROP TABLE IF EXISTS groundpipe CASCADE;
-DROP TABLE IF EXISTS elec CASCADE;
-
-
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- 2. 히트펌프 데이터 테이블
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CREATE TABLE heatpump (
-    id BIGSERIAL PRIMARY KEY,
-    device_id VARCHAR(50) NOT NULL,
-    timestamp TIMESTAMP NOT NULL,
-    input_temp NUMERIC(5,2),
-    output_temp NUMERIC(5,2),
-    flow NUMERIC(12,2),
-    energy NUMERIC(12,2),
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE IF NOT EXISTS heatpump (
+    id          BIGSERIAL PRIMARY KEY,
+    device_id   VARCHAR(50)  NOT NULL,
+    timestamp   TIMESTAMP    NOT NULL,
+    input_temp  NUMERIC(5,1),
+    output_temp NUMERIC(5,1),
+    flow        INTEGER,
+    energy      NUMERIC(12,2),
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 COMMENT ON TABLE heatpump IS 'Heatpump sensor data';
-COMMENT ON COLUMN heatpump.device_id IS 'Device ID (HP_1, HP_2, HP_3, HP_4)';
-COMMENT ON COLUMN heatpump.timestamp IS 'Measurement time';
-COMMENT ON COLUMN heatpump.input_temp IS 'Input temperature (Celsius)';
-COMMENT ON COLUMN heatpump.output_temp IS 'Output temperature (Celsius)';
-COMMENT ON COLUMN heatpump.flow IS 'Flow rate (L)';
-COMMENT ON COLUMN heatpump.energy IS 'Cumulative energy (kWh)';
+COMMENT ON COLUMN heatpump.device_id   IS 'Device ID (HP_1, HP_2, HP_3, HP_4)';
+COMMENT ON COLUMN heatpump.timestamp   IS 'Measurement time';
+COMMENT ON COLUMN heatpump.input_temp  IS 'Input temperature (Celsius, 소수점 1자리)';
+COMMENT ON COLUMN heatpump.output_temp IS 'Output temperature (Celsius, 소수점 1자리)';
+COMMENT ON COLUMN heatpump.flow        IS 'Flow rate (L, 정수)';
+COMMENT ON COLUMN heatpump.energy      IS 'Cumulative energy (kWh)';
 
-CREATE INDEX idx_heatpump_device ON heatpump(device_id);
-CREATE INDEX idx_heatpump_timestamp ON heatpump(timestamp DESC);
-CREATE INDEX idx_heatpump_device_timestamp ON heatpump(device_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_heatpump_device            ON heatpump(device_id);
+CREATE INDEX IF NOT EXISTS idx_heatpump_timestamp         ON heatpump(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_heatpump_device_timestamp  ON heatpump(device_id, timestamp DESC);
 
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- 3. 지중배관 데이터 테이블
+-- 2. 지중배관 데이터 테이블
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CREATE TABLE groundpipe (
-    id BIGSERIAL PRIMARY KEY,
-    device_id VARCHAR(50) NOT NULL,
-    timestamp TIMESTAMP NOT NULL,
-    input_temp NUMERIC(5,2),
-    output_temp NUMERIC(5,2),
-    flow NUMERIC(12,2),
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE IF NOT EXISTS groundpipe (
+    id          BIGSERIAL PRIMARY KEY,
+    device_id   VARCHAR(50)  NOT NULL,
+    timestamp   TIMESTAMP    NOT NULL,
+    input_temp  NUMERIC(5,1),
+    output_temp NUMERIC(5,1),
+    flow        INTEGER,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 COMMENT ON TABLE groundpipe IS 'Underground pipe sensor data';
-COMMENT ON COLUMN groundpipe.device_id IS 'Device ID (UP_1 ~ UP_10)';
-COMMENT ON COLUMN groundpipe.timestamp IS 'Measurement time';
-COMMENT ON COLUMN groundpipe.input_temp IS 'Input temperature (Celsius)';
-COMMENT ON COLUMN groundpipe.output_temp IS 'Output temperature (Celsius)';
-COMMENT ON COLUMN groundpipe.flow IS 'Flow rate (L)';
+COMMENT ON COLUMN groundpipe.device_id   IS 'Device ID (GP_1 ~ GP_10)';
+COMMENT ON COLUMN groundpipe.timestamp   IS 'Measurement time';
+COMMENT ON COLUMN groundpipe.input_temp  IS 'Input temperature (Celsius, 소수점 1자리)';
+COMMENT ON COLUMN groundpipe.output_temp IS 'Output temperature (Celsius, 소수점 1자리)';
+COMMENT ON COLUMN groundpipe.flow        IS 'Flow rate (L, 정수)';
 
-CREATE INDEX idx_groundpipe_device ON groundpipe(device_id);
-CREATE INDEX idx_groundpipe_timestamp ON groundpipe(timestamp DESC);
-CREATE INDEX idx_groundpipe_device_timestamp ON groundpipe(device_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_groundpipe_device           ON groundpipe(device_id);
+CREATE INDEX IF NOT EXISTS idx_groundpipe_timestamp        ON groundpipe(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_groundpipe_device_timestamp ON groundpipe(device_id, timestamp DESC);
 
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- 4. 전력량계 데이터 테이블
+-- 3. 전력량계 데이터 테이블
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CREATE TABLE elec (
-    id BIGSERIAL PRIMARY KEY,
-    device_id VARCHAR(50) NOT NULL,
-    timestamp TIMESTAMP NOT NULL,
+CREATE TABLE IF NOT EXISTS elec (
+    id           BIGSERIAL PRIMARY KEY,
+    device_id    VARCHAR(50)  NOT NULL,
+    timestamp    TIMESTAMP    NOT NULL,
     total_energy NUMERIC(12,2),
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 COMMENT ON TABLE elec IS 'Power meter data';
-COMMENT ON COLUMN elec.device_id IS 'Device ID (Total, Heater_1~6, HP_1~4)';
-COMMENT ON COLUMN elec.timestamp IS 'Measurement time';
+COMMENT ON COLUMN elec.device_id    IS 'Device ID (Total, 열풍기_1~6, 히트펌프_1~4)';
+COMMENT ON COLUMN elec.timestamp    IS 'Measurement time';
 COMMENT ON COLUMN elec.total_energy IS 'Cumulative energy (kWh)';
 
-CREATE INDEX idx_elec_device ON elec(device_id);
-CREATE INDEX idx_elec_timestamp ON elec(timestamp DESC);
-CREATE INDEX idx_elec_device_timestamp ON elec(device_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_elec_device           ON elec(device_id);
+CREATE INDEX IF NOT EXISTS idx_elec_timestamp        ON elec(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_elec_device_timestamp ON elec(device_id, timestamp DESC);
 
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- 5. 완료 메시지
+-- 4. 외부 DB 재전송 큐 (여주 PC 전용)
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SELECT 
-    'Table creation completed' AS message,
-    COUNT(*) AS table_count
-FROM information_schema.tables 
-WHERE table_schema = 'public' 
-  AND table_name IN ('heatpump', 'groundpipe', 'elec');
-
-
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- 5. 외부 DB 재전송 큐 테이블
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-DROP TABLE IF EXISTS remote_send_queue CASCADE;
-
-CREATE TABLE remote_send_queue (
+CREATE TABLE IF NOT EXISTS remote_send_queue (
     id          BIGSERIAL PRIMARY KEY,
     table_name  VARCHAR(50)  NOT NULL,
     payload     JSONB        NOT NULL,
@@ -112,7 +92,18 @@ CREATE TABLE remote_send_queue (
     last_tried  TIMESTAMP
 );
 
-CREATE INDEX idx_queue_created ON remote_send_queue(created_at ASC);
-CREATE INDEX idx_queue_retry   ON remote_send_queue(retry_count ASC);
+COMMENT ON TABLE remote_send_queue IS '외부 DB 재전송 대기 큐 (여주 PC 전용)';
 
-COMMENT ON TABLE remote_send_queue IS '외부 DB 재전송 대기 큐';
+CREATE INDEX IF NOT EXISTS idx_queue_created ON remote_send_queue(created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_queue_retry   ON remote_send_queue(retry_count ASC);
+
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- 5. 완료 메시지
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SELECT
+    'Table creation completed' AS message,
+    COUNT(*) AS table_count
+FROM information_schema.tables
+WHERE table_schema = 'public'
+  AND table_name IN ('heatpump', 'groundpipe', 'elec', 'remote_send_queue');

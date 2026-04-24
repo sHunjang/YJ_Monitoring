@@ -136,6 +136,14 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1400, 900)
 
         self.data_service = UIDataService()
+
+        # config 캐시 — 앱 시작 시 1회 로드, JSON 파일 반복 읽기 제거
+        from services.config_service import ConfigService
+        _config_svc = ConfigService()
+        self._all_hp_config = [d['device_id'] for d in _config_svc.get_heatpump_ips()]
+        self._all_gp_config = [d['device_id'] for d in _config_svc.get_groundpipe_ips()]
+        self._all_pm_config = [m['device_id'] for m in _config_svc.get_all_power_meter_devices()]
+
         self.alarm_service = AlarmService.get_instance()
         self.alarm_service.on_alarm_added = self._on_alarm_added
         self.last_log_timestamps = {}
@@ -585,12 +593,11 @@ class MainWindow(QMainWindow):
             return
         hours = self._hp_hours()
         try:
-            stats_in   = self.data_service.get_statistics_heatpump(device_id, hours=hours, field='t_in')
-            stats_out  = self.data_service.get_statistics_heatpump(device_id, hours=hours, field='t_out')
-            stats_flow = self.data_service.get_statistics_heatpump(device_id, hours=hours, field='flow')
-            self.hp_card_in.update_value(f"{stats_in['latest']:.1f}°C")
-            self.hp_card_out.update_value(f"{stats_out['latest']:.1f}°C")
-            self.hp_card_flow.update_value(f"{stats_flow['latest']:.1f} L")
+            stats = self.data_service.get_statistics_heatpump(device_id, hours=hours)
+
+            self.hp_card_in.update_value(f"{stats['t_in']['latest']:.1f}°C")
+            self.hp_card_out.update_value(f"{stats['t_out']['latest']:.1f}°C")
+            self.hp_card_flow.update_value(f"{stats['flow']['latest']:.0f} L")
             self.heatpump_chart.clear()
             for field, color, name in [
                 ('t_in',  Theme.HEATPUMP_COLOR, '입구 온도'),
@@ -608,12 +615,11 @@ class MainWindow(QMainWindow):
             return
         hours = self._gp_hours()
         try:
-            stats_in   = self.data_service.get_statistics_groundpipe(device_id, hours=hours, field='t_in')
-            stats_out  = self.data_service.get_statistics_groundpipe(device_id, hours=hours, field='t_out')
-            stats_flow = self.data_service.get_statistics_groundpipe(device_id, hours=hours, field='flow')
-            self.gp_card_in.update_value(f"{stats_in['latest']:.1f}°C")
-            self.gp_card_out.update_value(f"{stats_out['latest']:.1f}°C")
-            self.gp_card_flow.update_value(f"{stats_flow['latest']:.1f} L")
+            stats = self.data_service.get_statistics_groundpipe(device_id, hours=hours)
+
+            self.gp_card_in.update_value(f"{stats['t_in']['latest']:.1f}°C")
+            self.gp_card_out.update_value(f"{stats['t_out']['latest']:.1f}°C")
+            self.gp_card_flow.update_value(f"{stats['flow']['latest']:.0f} L")
             self.groundpipe_chart.clear()
             for field, color, name in [
                 ('t_in',  Theme.PIPE_COLOR, '입구 온도'),
@@ -646,129 +652,30 @@ class MainWindow(QMainWindow):
     # ─────────────────────────────────────────
     def update_data(self):
         try:
-            hp_devices = self.data_service.get_all_heatpump_devices()
-            gp_devices = self.data_service.get_all_groundpipe_devices()
+            hp_devices    = self.data_service.get_all_heatpump_devices()
+            gp_devices    = self.data_service.get_all_groundpipe_devices()
             power_devices = self.data_service.get_all_power_devices()
 
-            # ── 히트펌프 드롭다운 ──
-            current_hp = [self.hp_device_combo.itemText(i) for i in range(self.hp_device_combo.count())]
-            if current_hp != hp_devices:
-                sel = self.hp_device_combo.currentText()
-                self.hp_device_combo.blockSignals(True)
-                self.hp_device_combo.clear()
-                self.hp_device_combo.addItems(hp_devices)
-                if sel in hp_devices:
-                    self.hp_device_combo.setCurrentText(sel)
-                elif hp_devices:
-                    self.hp_device_combo.setCurrentIndex(0)
-                self.hp_device_combo.blockSignals(False)
+            current_tab = self.tabs.currentIndex()
 
-            selected_hp = self.hp_device_combo.currentText()
-            hours_hp = self._hp_hours()
-            if selected_hp:
-                s_in   = self.data_service.get_statistics_heatpump(selected_hp, hours=hours_hp, field='t_in')
-                s_out  = self.data_service.get_statistics_heatpump(selected_hp, hours=hours_hp, field='t_out')
-                s_flow = self.data_service.get_statistics_heatpump(selected_hp, hours=hours_hp, field='flow')
-                self.hp_card_in.update_value(f"{s_in['latest']:.1f}°C")
-                self.hp_card_out.update_value(f"{s_out['latest']:.1f}°C")
-                self.hp_card_flow.update_value(f"{s_flow['latest']:.1f} L")
-                for field, color, name in [
-                    ('t_in',  Theme.HEATPUMP_COLOR, '입구 온도'),
-                    ('t_out', Theme.PRIMARY,         '출구 온도'),
-                    ('flow',  Theme.WARNING,          '유량'),
-                ]:
-                    data = self.data_service.get_timeseries_heatpump(selected_hp, hours=hours_hp, field=field)
-                    if data:
-                        key = f'{selected_hp}_{field}'
-                        if key in self.heatpump_chart.plot_lines:
-                            self.heatpump_chart.update_line(key, data)
-                        else:
-                            self.heatpump_chart.add_line(key, data, color=color, name=name)
+            # ── 탭별 갱신 ──────────────────────────
+            if current_tab == 0:    # 대시보드
+                self._update_dashboard(hp_devices, gp_devices, power_devices)
 
-                # 로그
-                ts_data = self.data_service.get_timeseries_heatpump(selected_hp, hours=hours_hp, field='t_in')
-                if ts_data:
-                    lt = ts_data[-1]['timestamp']
-                    if self.last_log_timestamps.get(f'HP_{selected_hp}') != lt:
-                        self.log_viewer.add_sensor_data_log(lt, 'HP', selected_hp, {
-                            'input_temp': s_in['latest'], 'output_temp': s_out['latest'], 'flow': s_flow['latest']
-                        })
-                        self.last_log_timestamps[f'HP_{selected_hp}'] = lt
+            elif current_tab == 1:  # 히트펌프
+                self._update_heatpump_tab(hp_devices)
 
-            # ── 지중배관 드롭다운 ──
-            current_gp = [self.gp_device_combo.itemText(i) for i in range(self.gp_device_combo.count())]
-            if current_gp != gp_devices:
-                sel = self.gp_device_combo.currentText()
-                self.gp_device_combo.blockSignals(True)
-                self.gp_device_combo.clear()
-                self.gp_device_combo.addItems(gp_devices)
-                if sel in gp_devices:
-                    self.gp_device_combo.setCurrentText(sel)
-                elif gp_devices:
-                    self.gp_device_combo.setCurrentIndex(0)
-                self.gp_device_combo.blockSignals(False)
+            elif current_tab == 2:  # 지중배관
+                self._update_groundpipe_tab(gp_devices)
 
-            selected_gp = self.gp_device_combo.currentText()
-            hours_gp = self._gp_hours()
-            if selected_gp:
-                s_in   = self.data_service.get_statistics_groundpipe(selected_gp, hours=hours_gp, field='t_in')
-                s_out  = self.data_service.get_statistics_groundpipe(selected_gp, hours=hours_gp, field='t_out')
-                s_flow = self.data_service.get_statistics_groundpipe(selected_gp, hours=hours_gp, field='flow')
-                self.gp_card_in.update_value(f"{s_in['latest']:.1f}°C")
-                self.gp_card_out.update_value(f"{s_out['latest']:.1f}°C")
-                self.gp_card_flow.update_value(f"{s_flow['latest']:.1f} L")
-                for field, color, name in [
-                    ('t_in',  Theme.PIPE_COLOR, '입구 온도'),
-                    ('t_out', Theme.PRIMARY,    '출구 온도'),
-                    ('flow',  Theme.WARNING,     '유량'),
-                ]:
-                    data = self.data_service.get_timeseries_groundpipe(selected_gp, hours=hours_gp, field=field)
-                    if data:
-                        key = f'{selected_gp}_{field}'
-                        if key in self.groundpipe_chart.plot_lines:
-                            self.groundpipe_chart.update_line(key, data)
-                        else:
-                            self.groundpipe_chart.add_line(key, data, color=color, name=name)
+            elif current_tab == 3:  # 전력량계
+                self._update_power_tab(power_devices)
 
-                ts_data = self.data_service.get_timeseries_groundpipe(selected_gp, hours=hours_gp, field='t_in')
-                if ts_data:
-                    lt = ts_data[-1]['timestamp']
-                    if self.last_log_timestamps.get(f'GP_{selected_gp}') != lt:
-                        self.log_viewer.add_sensor_data_log(lt, 'GP', selected_gp, {
-                            'input_temp': s_in['latest'], 'output_temp': s_out['latest'], 'flow': s_flow['latest']
-                        })
-                        self.last_log_timestamps[f'GP_{selected_gp}'] = lt
-
-            # ── 전력량계 ──
-            hours_pw = self._pw_hours()
-            for i, card in enumerate(self.power_cards):
-                if i < len(power_devices):
-                    device_id = power_devices[i]
-                    stats = self.data_service.get_statistics_power(device_id, hours=hours_pw)
-                    card.update_value(f"{stats['latest']:.2f} kWh")
-                    ts_data = self.data_service.get_timeseries_power(device_id, hours=hours_pw)
-                    if ts_data:
-                        lt = ts_data[-1]['timestamp']
-                        if self.last_log_timestamps.get(f'ELEC_{device_id}') != lt:
-                            self.log_viewer.add_sensor_data_log(lt, 'ELEC', device_id, {'total_energy': ts_data[-1]['value']})
-                            self.last_log_timestamps[f'ELEC_{device_id}'] = lt
-
-            for device_id in power_devices[:4]:
-                data = self.data_service.get_timeseries_power(device_id, hours=hours_pw)
-                if data:
-                    if device_id in self.power_chart.plot_lines:
-                        self.power_chart.update_line(device_id, data)
-                    else:
-                        self.power_chart.add_line(device_id, data, name=f'{device_id} 전력량')
-
-            # ── COP ──
-            if self.tabs.currentWidget() is self.cop_tab:
+            elif current_tab == 4:  # COP
                 self.cop_tab.refresh()
 
-            # ── 대시보드 갱신 ──
-            self._update_dashboard(hp_devices, gp_devices, power_devices)
-
-            # ── 상태 ──
+            # ── 공통 (항상 실행) ───────────────────
+            self._update_dropdowns(hp_devices, gp_devices)
             self.status_label.setText('● 연결됨')
             self.status_label.setStyleSheet(f'color: {Theme.SUCCESS};')
             self._apply_status_cache()
@@ -781,17 +688,148 @@ class MainWindow(QMainWindow):
             self.status_local_db.setText('🖥️ 로컬 DB  ● 연결 끊김')
             self.status_local_db.setStyleSheet(f'color: {Theme.DANGER};')
 
+    def _update_dropdowns(self, hp_devices, gp_devices):
+        """드롭다운 장치 목록만 갱신 (쿼리 없음)"""
+        current_hp = [self.hp_device_combo.itemText(i)
+                    for i in range(self.hp_device_combo.count())]
+        if current_hp != hp_devices:
+            sel = self.hp_device_combo.currentText()
+            self.hp_device_combo.blockSignals(True)
+            self.hp_device_combo.clear()
+            self.hp_device_combo.addItems(hp_devices)
+            if sel in hp_devices:
+                self.hp_device_combo.setCurrentText(sel)
+            elif hp_devices:
+                self.hp_device_combo.setCurrentIndex(0)
+            self.hp_device_combo.blockSignals(False)
+
+        current_gp = [self.gp_device_combo.itemText(i)
+                    for i in range(self.gp_device_combo.count())]
+        if current_gp != gp_devices:
+            sel = self.gp_device_combo.currentText()
+            self.gp_device_combo.blockSignals(True)
+            self.gp_device_combo.clear()
+            self.gp_device_combo.addItems(gp_devices)
+            if sel in gp_devices:
+                self.gp_device_combo.setCurrentText(sel)
+            elif gp_devices:
+                self.gp_device_combo.setCurrentIndex(0)
+            self.gp_device_combo.blockSignals(False)
+
+    def _update_heatpump_tab(self, hp_devices):
+        selected_hp = self.hp_device_combo.currentText()
+        hours_hp = self._hp_hours()
+        if not selected_hp:
+            return
+        stats = self.data_service.get_statistics_heatpump(selected_hp, hours=hours_hp)
+        self.hp_card_in.update_value(f"{stats['t_in']['latest']:.1f}°C")
+        self.hp_card_out.update_value(f"{stats['t_out']['latest']:.1f}°C")
+        self.hp_card_flow.update_value(f"{stats['flow']['latest']:.0f} L")
+
+        ts_in = None  # ← for 루프에서 캐싱
+        for field, color, name in [
+            ('t_in',  Theme.HEATPUMP_COLOR, '입구 온도'),
+            ('t_out', Theme.PRIMARY,        '출구 온도'),
+            ('flow',  Theme.WARNING,        '유량'),
+        ]:
+            data = self.data_service.get_timeseries_heatpump(
+                selected_hp, hours=hours_hp, field=field
+            )
+            if field == 't_in':
+                ts_in = data  # ← 캐싱
+            if data:
+                key = f'{selected_hp}_{field}'
+                if key in self.heatpump_chart.plot_lines:
+                    self.heatpump_chart.update_line(key, data)
+                else:
+                    self.heatpump_chart.add_line(key, data, color=color, name=name)
+
+        # 로그 — 캐싱된 ts_in 재사용 (추가 쿼리 없음)
+        if ts_in:
+            lt = ts_in[-1]['timestamp']
+            if self.last_log_timestamps.get(f'HP_{selected_hp}') != lt:
+                self.log_viewer.add_sensor_data_log(lt, 'HP', selected_hp, {
+                    'input_temp':  stats['t_in']['latest'],
+                    'output_temp': stats['t_out']['latest'],
+                    'flow':        stats['flow']['latest']
+                })
+                self.last_log_timestamps[f'HP_{selected_hp}'] = lt
+
+    def _update_groundpipe_tab(self, gp_devices):
+        """지중배관 탭 갱신"""
+        selected_gp = self.gp_device_combo.currentText()
+        hours_gp = self._gp_hours()
+        if not selected_gp:
+            return
+        stats = self.data_service.get_statistics_groundpipe(selected_gp, hours=hours_gp)
+        self.gp_card_in.update_value(f"{stats['t_in']['latest']:.1f}°C")
+        self.gp_card_out.update_value(f"{stats['t_out']['latest']:.1f}°C")
+        self.gp_card_flow.update_value(f"{stats['flow']['latest']:.0f} L")
+        
+        ts_in = None        
+        
+        for field, color, name in [
+            ('t_in',  Theme.PIPE_COLOR, '입구 온도'),
+            ('t_out', Theme.PRIMARY,    '출구 온도'),
+            ('flow',  Theme.WARNING,    '유량'),
+        ]:
+            data = self.data_service.get_timeseries_groundpipe(
+                selected_gp, hours=hours_gp, field=field
+            )
+            
+            if field == 't_in':
+                ts_in = data
+            
+            if data:
+                key = f'{selected_gp}_{field}'
+                if key in self.groundpipe_chart.plot_lines:
+                    self.groundpipe_chart.update_line(key, data)
+                else:
+                    self.groundpipe_chart.add_line(key, data, color=color, name=name)
+                    
+        if ts_in:
+            lt = ts_in[-1]['timestamp']
+            if self.last_log_timestamps.get(f'HP_{selected_gp}') != lt:
+                self.log_viewer.add_sensor_data_log(lt, 'HP', selected_gp, {
+                    'input_temp':  stats['t_in']['latest'],
+                    'output_temp': stats['t_out']['latest'],
+                    'flow':        stats['flow']['latest']
+                })
+                self.last_log_timestamps[f'HP_{selected_gp}'] = lt
+
+    def _update_power_tab(self, power_devices):
+        """전력량계 탭 갱신"""
+        hours_pw = self._pw_hours()
+        for i, card in enumerate(self.power_cards):
+            if i < len(power_devices):
+                device_id = power_devices[i]
+                stats = self.data_service.get_statistics_power(device_id, hours=hours_pw)
+                card.update_value(f"{stats['latest']:.2f} kWh")
+                ts_data = self.data_service.get_timeseries_power(device_id, hours=hours_pw)
+                if ts_data:
+                    lt = ts_data[-1]['timestamp']
+                    if self.last_log_timestamps.get(f'ELEC_{device_id}') != lt:
+                        self.log_viewer.add_sensor_data_log(
+                            lt, 'ELEC', device_id,
+                            {'total_energy': ts_data[-1]['value']}
+                        )
+                        self.last_log_timestamps[f'ELEC_{device_id}'] = lt
+        for device_id in power_devices[:4]:
+            data = self.data_service.get_timeseries_power(device_id, hours=hours_pw)
+            if data:
+                if device_id in self.power_chart.plot_lines:
+                    self.power_chart.update_line(device_id, data)
+                else:
+                    self.power_chart.add_line(device_id, data, name=f'{device_id} 전력량')
+            
     # ─────────────────────────────────────────
     # 대시보드 갱신
     # ─────────────────────────────────────────
     def _update_dashboard(self, hp_devices, gp_devices, power_devices):
-        # config 파일 기준 전체 장치 목록
-        from services.config_service import ConfigService
-        config_svc = ConfigService()
-        all_hp = [d['device_id'] for d in config_svc.get_heatpump_ips()]
-        all_gp = [d['device_id'] for d in config_svc.get_groundpipe_ips()]
-
-        all_pm = [m['device_id'] for m in config_svc.get_all_power_meter_devices()]
+        all_hp = self._all_hp_config
+        all_gp = self._all_gp_config
+        all_pm = self._all_pm_config
+        
         total  = len(all_hp) + len(all_gp) + len(all_pm)
         online = len(hp_devices) + len(gp_devices) + len(power_devices)
         alarm_count = self.alarm_service.count()
@@ -822,12 +860,10 @@ class MainWindow(QMainWindow):
                 self.gauge_group.add_gauge('hp1_out',  f'{gauge_dev} 출구온도', '°C', 0, 50, Theme.PRIMARY)
                 self.gauge_group.add_gauge('hp1_flow', f'{gauge_dev} 유량',     'L',  0, 100, Theme.WARNING)
             if gauge_dev in hp_devices:
-                s_in   = self.data_service.get_statistics_heatpump(gauge_dev, hours=1, field='t_in')
-                s_out  = self.data_service.get_statistics_heatpump(gauge_dev, hours=1, field='t_out')
-                s_flow = self.data_service.get_statistics_heatpump(gauge_dev, hours=1, field='flow')
-                self.gauge_group.update_gauge('hp1_in',   s_in['latest'])
-                self.gauge_group.update_gauge('hp1_out',  s_out['latest'])
-                self.gauge_group.update_gauge('hp1_flow', s_flow['latest'])
+                stats = self.data_service.get_statistics_heatpump(gauge_dev, hours=1)
+                self.gauge_group.update_gauge('hp1_in',   stats['t_in']['latest'])
+                self.gauge_group.update_gauge('hp1_out',  stats['t_out']['latest'])
+                self.gauge_group.update_gauge('hp1_flow', stats['flow']['latest'])
 
         # 알림 패널 갱신
         self._refresh_alarm_panel()
@@ -862,8 +898,8 @@ class MainWindow(QMainWindow):
         for dev in all_hp:
             is_online = dev in online_hp
             if is_online:
-                s = self.data_service.get_statistics_heatpump(dev, hours=1, field='t_in')
-                val = f"{s['latest']:.1f}°C"
+                s = self.data_service.get_statistics_heatpump(dev, hours=1)
+                val = f"{s['t_in']['latest']:.1f}°C"
             else:
                 val = 'N/A'
             status = '🟢 온라인' if is_online else '⚫ 오프라인'
@@ -872,8 +908,8 @@ class MainWindow(QMainWindow):
         for dev in all_gp:
             is_online = dev in online_gp
             if is_online:
-                s = self.data_service.get_statistics_groundpipe(dev, hours=1, field='t_in')
-                val = f"{s['latest']:.1f}°C"
+                s = self.data_service.get_statistics_groundpipe(dev, hours=1)
+                val = f"{s['t_in']['latest']:.1f}°C"
             else:
                 val = 'N/A'
             status = '🟢 온라인' if is_online else '⚫ 오프라인'
@@ -1073,7 +1109,18 @@ class MainWindow(QMainWindow):
         CSVExportDialog(self).exec()
 
     def open_layout_map(self):
-        LayoutMapDialog(self).exec()
+        dialog = LayoutMapDialog(self)
+        dialog.exec()
+        self._reload_config_cache()  # 배치도에서 장치 변경 시 캐시 갱신
+
+    def _reload_config_cache(self):
+        """config 캐시 갱신"""
+        from services.config_service import ConfigService
+        _config_svc = ConfigService()
+        self._all_hp_config = [d['device_id'] for d in _config_svc.get_heatpump_ips()]
+        self._all_gp_config = [d['device_id'] for d in _config_svc.get_groundpipe_ips()]
+        self._all_pm_config = [m['device_id'] for m in _config_svc.get_all_power_meter_devices()]
+        logger.info("config 캐시 갱신 완료")
 
     def show_about(self):
         QMessageBox.about(self, '프로그램 정보',

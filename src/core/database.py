@@ -237,6 +237,53 @@ def insert_heatpump_data(
         return False
 
 
+def insert_heatpump_batch(records: list) -> bool:
+    """
+    히트펌프 데이터 배치 저장 (한 트랜잭션)
+
+    Args:
+        records: [
+            {
+                'device_id': str,
+                'input_temp': float,
+                'output_temp': float,
+                'flow': float,
+                'energy': float,
+                'timestamp': datetime
+            }, ...
+        ]
+    """
+    if not records:
+        return True
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            query = """
+                INSERT INTO heatpump
+                (device_id, timestamp, input_temp, output_temp, flow, energy)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """
+            params = [
+                (
+                    r['device_id'],
+                    r.get('timestamp', datetime.now()),
+                    r.get('input_temp'),
+                    r.get('output_temp'),
+                    r.get('flow'),
+                    r.get('energy'),
+                )
+                for r in records
+            ]
+            cursor.executemany(query, params)
+            conn.commit()
+            cursor.close()
+            logger.debug(f"히트펌프 배치 저장 완료: {len(records)}건")
+            return True
+    except Exception as e:
+        logger.error(f"히트펌프 배치 저장 실패: {e}", exc_info=True)
+        return False
+
+
 def get_heatpump_data(
     device_id: str,
     start_time: Optional[datetime] = None,
@@ -338,6 +385,49 @@ def insert_groundpipe_data(
         logger.error(f"[{device_id}] 지중배관 데이터 저장 실패: {e}", exc_info=True)
         return False
 
+def insert_groundpipe_batch(records: list) -> bool:
+    """
+    지중배관 데이터 배치 저장 (한 트랜잭션)
+
+    Args:
+        records: [
+            {
+                'device_id': str,
+                'input_temp': float,
+                'output_temp': float,
+                'flow': float,
+                'timestamp': datetime
+            }, ...
+        ]
+    """
+    if not records:
+        return True
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            query = """
+                INSERT INTO groundpipe
+                (device_id, timestamp, input_temp, output_temp, flow)
+                VALUES (%s, %s, %s, %s, %s)
+            """
+            params = [
+                (
+                    r['device_id'],
+                    r.get('timestamp', datetime.now()),
+                    r.get('input_temp'),
+                    r.get('output_temp'),
+                    r.get('flow'),
+                )
+                for r in records
+            ]
+            cursor.executemany(query, params)
+            conn.commit()
+            cursor.close()
+            logger.debug(f"지중배관 배치 저장 완료: {len(records)}건")
+            return True
+    except Exception as e:
+        logger.error(f"지중배관 배치 저장 실패: {e}", exc_info=True)
+        return False
 
 def get_groundpipe_data(
     device_id: str,
@@ -428,6 +518,46 @@ def insert_power_meter_data(
         logger.error(f"[{device_id}] 전력량계 데이터 저장 실패: {e}", exc_info=True)
         return False
 
+
+def insert_power_meter_batch(records: list) -> bool:
+    """
+    전력량계 데이터 배치 저장 (한 트랜잭션)
+
+    Args:
+        records: [
+            {
+                'device_id': str,
+                'total_energy': float,
+                'timestamp': datetime
+            }, ...
+        ]
+    """
+    if not records:
+        return True
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            query = """
+                INSERT INTO elec
+                (device_id, timestamp, total_energy)
+                VALUES (%s, %s, %s)
+            """
+            params = [
+                (
+                    r['device_id'],
+                    r.get('timestamp', datetime.now()),
+                    r.get('total_energy'),
+                )
+                for r in records
+            ]
+            cursor.executemany(query, params)
+            conn.commit()
+            cursor.close()
+            logger.debug(f"전력량계 배치 저장 완료: {len(records)}건")
+            return True
+    except Exception as e:
+        logger.error(f"전력량계 배치 저장 실패: {e}", exc_info=True)
+        return False
 
 def get_power_meter_data(
     device_id: str,

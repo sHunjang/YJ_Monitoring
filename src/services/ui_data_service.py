@@ -24,7 +24,33 @@ class UIDataService:
     def __init__(self):
         """초기화"""
         logger.info("UIDataService 초기화")
-    
+        # TTL 캐시 {cache_key: (expired_at, data)}
+        self._cache: dict = {}
+        self._cache_ttl = 55  # 초 (수집 주기 60초보다 살짝 짧게)
+
+    def _cache_get(self, key: str):
+        """캐시에서 값 조회. 만료됐으면 None 반환."""
+        if key in self._cache:
+            expired_at, data = self._cache[key]
+            if datetime.now().timestamp() < expired_at:
+                return data
+            del self._cache[key]
+        return None
+
+    def _cache_set(self, key: str, data):
+        """캐시에 값 저장."""
+        expired_at = datetime.now().timestamp() + self._cache_ttl
+        self._cache[key] = (expired_at, data)
+
+    def _cache_invalidate(self, prefix: str = ''):
+        """캐시 무효화 (특정 prefix 또는 전체)."""
+        if prefix:
+            keys = [k for k in self._cache if k.startswith(prefix)]
+            for k in keys:
+                del self._cache[k]
+        else:
+            self._cache.clear()
+
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # 센서 목록 조회
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -107,6 +133,12 @@ class UIDataService:
         Returns:
             List[Dict]: [{'timestamp': datetime, 'value': float}, ...]
         """
+            
+        cache_key = f'ts_hp_{device_id}_{hours}_{field}'
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
+        
         try:
             # 필드명 매핑 (UI 필드명 → DB 컬럼명)
             field_mapping = {
@@ -129,13 +161,18 @@ class UIDataService:
             
             result = execute_query(query, (device_id, start_time), fetch_mode='all')
             
-            return [
+            result = [
                 {
                     'timestamp': row['timestamp'],
                     'value': float(row[db_field]) if row[db_field] is not None else 0.0
                 }
                 for row in result
             ]
+            
+            self._cache_set(cache_key, result)
+            
+            return result
+
         except Exception as e:
             logger.error(f"히트펌프 시계열 데이터 조회 실패: {e}")
             return []
@@ -157,6 +194,12 @@ class UIDataService:
         Returns:
             List[Dict]: [{'timestamp': datetime, 'value': float}, ...]
         """
+                
+        cache_key = f'ts_gp_{device_id}_{hours}_{field}'
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
+        
         try:
             # 필드명 매핑
             field_mapping = {
@@ -178,13 +221,17 @@ class UIDataService:
             
             result = execute_query(query, (device_id, start_time), fetch_mode='all')
             
-            return [
+            result = [
                 {
                     'timestamp': row['timestamp'],
                     'value': float(row[db_field]) if row[db_field] is not None else 0.0
                 }
                 for row in result
             ]
+            self._cache_set(cache_key, result)
+            
+            return result
+        
         except Exception as e:
             logger.error(f"지중배관 시계열 데이터 조회 실패: {e}")
             return []
@@ -195,6 +242,7 @@ class UIDataService:
         hours: int = 1,
         field: str = 'total_energy'
     ) -> List[Dict]:
+    
         """
         전력량계 시계열 데이터 조회
         
@@ -206,6 +254,12 @@ class UIDataService:
         Returns:
             List[Dict]: [{'timestamp': datetime, 'value': float}, ...]
         """
+        
+        cache_key = f'ts_elec_{device_id}_{hours}_{field}'
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
+        
         try:
             start_time = datetime.now() - timedelta(hours=hours)
             
@@ -219,13 +273,17 @@ class UIDataService:
             
             result = execute_query(query, (device_id, start_time), fetch_mode='all')
             
-            return [
+            result = [
                 {
                     'timestamp': row['timestamp'],
                     'value': float(row['total_energy']) if row['total_energy'] is not None else 0.0
                 }
                 for row in result
             ]
+            
+            self._cache_set(cache_key, result)
+            
+            return result
         except Exception as e:
             logger.error(f"전력량계 시계열 데이터 조회 실패: {e}")
             return []
@@ -238,183 +296,171 @@ class UIDataService:
         self,
         device_id: str,
         hours: int = 24,
-        field: str = 't_in'
     ) -> Dict:
         """
-        히트펌프 통계 데이터 조회
-        
-        Args:
-            device_id: 장치 ID
-            hours: 조회 시간 (시간 단위)
-            field: 측정 항목
-        
+        히트펌프 통계 데이터 조회 (전체 필드 한 번에)
+
         Returns:
-            Dict: {'latest': float, 'avg': float, 'max': float, 'min': float, 'count': int}
+            Dict: {
+                't_in':  {'latest', 'avg', 'max', 'min', 'count'},
+                't_out': {'latest', 'avg', 'max', 'min', 'count'},
+                'flow':  {'latest', 'avg', 'max', 'min', 'count'},
+            }
         """
+        
+        cache_key = f'stats_hp_{device_id}_{hours}'
+        cached = self._cache_get(cache_key)
+        
+        if cached is not None:
+            return cached
+        
+        empty = {'latest': 0.0, 'avg': 0.0, 'max': 0.0, 'min': 0.0, 'count': 0}
         try:
-            # 필드명 매핑
-            field_mapping = {
-                't_in': 'input_temp',
-                't_out': 'output_temp',
-                'flow': 'flow',
-                'energy': 'energy'
-            }
-            
-            db_field = field_mapping.get(field, field)
             start_time = datetime.now() - timedelta(hours=hours)
-            
-            # 최신 값
-            query_latest = f"""
-                SELECT {db_field}
+
+            query = """
+                SELECT
+                    -- 최신값 (DISTINCT ON 활용)
+                    (SELECT input_temp  FROM heatpump WHERE device_id = %s ORDER BY timestamp DESC LIMIT 1) AS latest_in,
+                    (SELECT output_temp FROM heatpump WHERE device_id = %s ORDER BY timestamp DESC LIMIT 1) AS latest_out,
+                    (SELECT flow        FROM heatpump WHERE device_id = %s ORDER BY timestamp DESC LIMIT 1) AS latest_flow,
+                    -- 기간 통계
+                    AVG(input_temp)   AS avg_in,  MAX(input_temp)   AS max_in,  MIN(input_temp)   AS min_in,
+                    AVG(output_temp)  AS avg_out, MAX(output_temp)  AS max_out, MIN(output_temp)  AS min_out,
+                    AVG(flow)         AS avg_flow, MAX(flow)         AS max_flow, MIN(flow)        AS min_flow,
+                    COUNT(*)          AS cnt
                 FROM heatpump
                 WHERE device_id = %s
-                ORDER BY timestamp DESC
-                LIMIT 1
+                AND timestamp >= %s
             """
-            latest_result = execute_query(query_latest, (device_id,), fetch_mode='one')
-            latest = float(latest_result[db_field]) if latest_result and latest_result[db_field] is not None else 0.0
-            
-            # 통계 값
-            query_stats = f"""
-                SELECT 
-                    AVG({db_field}) as avg,
-                    MAX({db_field}) as max,
-                    MIN({db_field}) as min,
-                    COUNT(*) as count
-                FROM heatpump
-                WHERE device_id = %s
-                  AND timestamp >= %s
-            """
-            stats_result = execute_query(query_stats, (device_id, start_time), fetch_mode='one')
-            
-            return {
-                'latest': round(latest, 1),
-                'avg': round(float(stats_result['avg']), 1) if stats_result['avg'] else 0.0,
-                'max': round(float(stats_result['max']), 1) if stats_result['max'] else 0.0,
-                'min': round(float(stats_result['min']), 1) if stats_result['min'] else 0.0,
-                'count': int(stats_result['count'])
+            r = execute_query(
+                query,
+                (device_id, device_id, device_id, device_id, start_time),
+                fetch_mode='one'
+            )
+            if not r:
+                return {'t_in': empty, 't_out': empty, 'flow': empty}
+
+            def _s(latest, avg, mx, mn, cnt):
+                return {
+                    'latest': round(float(latest), 1) if latest is not None else 0.0,
+                    'avg':    round(float(avg),    1) if avg    is not None else 0.0,
+                    'max':    round(float(mx),     1) if mx     is not None else 0.0,
+                    'min':    round(float(mn),     1) if mn     is not None else 0.0,
+                    'count':  int(cnt) if cnt is not None else 0,
+                }
+
+            result = {
+                't_in':  _s(r['latest_in'],   r['avg_in'],   r['max_in'],   r['min_in'],   r['cnt']),
+                't_out': _s(r['latest_out'],  r['avg_out'],  r['max_out'],  r['min_out'],  r['cnt']),
+                'flow':  _s(r['latest_flow'], r['avg_flow'], r['max_flow'], r['min_flow'], r['cnt']),
             }
+            
+            self._cache_set(cache_key, result)
+            
+            return result
+
         except Exception as e:
-            logger.error(f"히트펌프 통계 데이터 조회 실패: {e}")
-            return {'latest': 0.0, 'avg': 0.0, 'max': 0.0, 'min': 0.0, 'count': 0}
+            logger.error(f"히트펌프 통계 조회 실패: {e}")
+            return {'t_in': empty, 't_out': empty, 'flow': empty}
     
     def get_statistics_groundpipe(
         self,
         device_id: str,
         hours: int = 24,
-        field: str = 't_in'
     ) -> Dict:
-        """
-        지중배관 통계 데이터 조회
         
-        Args:
-            device_id: 장치 ID
-            hours: 조회 시간 (시간 단위)
-            field: 측정 항목
-        
-        Returns:
-            Dict: {'latest': float, 'avg': float, 'max': float, 'min': float, 'count': int}
-        """
-        try:
-            # 필드명 매핑
-            field_mapping = {
-                't_in': 'input_temp',
-                't_out': 'output_temp',
-                'flow': 'flow'
-            }
-            
-            db_field = field_mapping.get(field, field)
-            start_time = datetime.now() - timedelta(hours=hours)
-            
-            # 최신 값
-            query_latest = f"""
-                SELECT {db_field}
-                FROM groundpipe
-                WHERE device_id = %s
-                ORDER BY timestamp DESC
-                LIMIT 1
-            """
-            latest_result = execute_query(query_latest, (device_id,), fetch_mode='one')
-            latest = float(latest_result[db_field]) if latest_result and latest_result[db_field] is not None else 0.0
-            
-            # 통계 값
-            query_stats = f"""
-                SELECT 
-                    AVG({db_field}) as avg,
-                    MAX({db_field}) as max,
-                    MIN({db_field}) as min,
-                    COUNT(*) as count
-                FROM groundpipe
-                WHERE device_id = %s
-                  AND timestamp >= %s
-            """
-            stats_result = execute_query(query_stats, (device_id, start_time), fetch_mode='one')
-            
-            return {
-                'latest': round(latest, 1),
-                'avg': round(float(stats_result['avg']), 1) if stats_result['avg'] else 0.0,
-                'max': round(float(stats_result['max']), 1) if stats_result['max'] else 0.0,
-                'min': round(float(stats_result['min']), 1) if stats_result['min'] else 0.0,
-                'count': int(stats_result['count'])
-            }
-        except Exception as e:
-            logger.error(f"지중배관 통계 데이터 조회 실패: {e}")
-            return {'latest': 0.0, 'avg': 0.0, 'max': 0.0, 'min': 0.0, 'count': 0}
-    
-    def get_statistics_power(
-        self,
-        device_id: str,
-        hours: int = 24,
-        field: str = 'total_energy'
-    ) -> Dict:
-        """
-        전력량계 통계 데이터 조회
-        
-        Args:
-            device_id: 장치 ID
-            hours: 조회 시간 (시간 단위)
-            field: 측정 항목 (항상 'total_energy')
-        
-        Returns:
-            Dict: {'latest': float, 'avg': float, 'max': float, 'min': float, 'count': int}
-        """
+        cache_key = f'stats_gp_{device_id}_{hours}'
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        empty = {'latest': 0.0, 'avg': 0.0, 'max': 0.0, 'min': 0.0, 'count': 0}
         try:
             start_time = datetime.now() - timedelta(hours=hours)
-            
-            # 최신 값
-            query_latest = """
-                SELECT total_energy
-                FROM elec
+
+            query = """
+                SELECT
+                    (SELECT input_temp  FROM groundpipe WHERE device_id = %s ORDER BY timestamp DESC LIMIT 1) AS latest_in,
+                    (SELECT output_temp FROM groundpipe WHERE device_id = %s ORDER BY timestamp DESC LIMIT 1) AS latest_out,
+                    (SELECT flow        FROM groundpipe WHERE device_id = %s ORDER BY timestamp DESC LIMIT 1) AS latest_flow,
+                    AVG(input_temp)   AS avg_in,  MAX(input_temp)   AS max_in,  MIN(input_temp)   AS min_in,
+                    AVG(output_temp)  AS avg_out, MAX(output_temp)  AS max_out, MIN(output_temp)  AS min_out,
+                    AVG(flow)         AS avg_flow, MAX(flow)         AS max_flow, MIN(flow)        AS min_flow,
+                    COUNT(*)          AS cnt
+                FROM groundpipe
                 WHERE device_id = %s
-                ORDER BY timestamp DESC
-                LIMIT 1
+                AND timestamp >= %s
             """
-            latest_result = execute_query(query_latest, (device_id,), fetch_mode='one')
-            latest = float(latest_result['total_energy']) if latest_result and latest_result['total_energy'] is not None else 0.0
-            
-            # 통계 값
-            query_stats = """
-                SELECT 
-                    AVG(total_energy) as avg,
-                    MAX(total_energy) as max,
-                    MIN(total_energy) as min,
-                    COUNT(*) as count
-                FROM elec
-                WHERE device_id = %s
-                  AND timestamp >= %s
-            """
-            stats_result = execute_query(query_stats, (device_id, start_time), fetch_mode='one')
-            
-            return {
-                'latest': round(latest, 1),
-                'avg': round(float(stats_result['avg']), 1) if stats_result['avg'] else 0.0,
-                'max': round(float(stats_result['max']), 1) if stats_result['max'] else 0.0,
-                'min': round(float(stats_result['min']), 1) if stats_result['min'] else 0.0,
-                'count': int(stats_result['count'])
+            r = execute_query(
+                query,
+                (device_id, device_id, device_id, device_id, start_time),
+                fetch_mode='one'
+            )
+            if not r:
+                return {'t_in': empty, 't_out': empty, 'flow': empty}
+
+            def _s(latest, avg, mx, mn, cnt):
+                return {
+                    'latest': round(float(latest), 1) if latest is not None else 0.0,
+                    'avg':    round(float(avg),    1) if avg    is not None else 0.0,
+                    'max':    round(float(mx),     1) if mx     is not None else 0.0,
+                    'min':    round(float(mn),     1) if mn     is not None else 0.0,
+                    'count':  int(cnt) if cnt is not None else 0,
+                }
+
+            result = {
+                't_in':  _s(r['latest_in'],   r['avg_in'],   r['max_in'],   r['min_in'],   r['cnt']),
+                't_out': _s(r['latest_out'],  r['avg_out'],  r['max_out'],  r['min_out'],  r['cnt']),
+                'flow':  _s(r['latest_flow'], r['avg_flow'], r['max_flow'], r['min_flow'], r['cnt']),
             }
+            
+            self._cache_set(cache_key, result)
+            
+            return result 
         except Exception as e:
-            logger.error(f"전력량계 통계 데이터 조회 실패: {e}")
-            return {'latest': 0.0, 'avg': 0.0, 'max': 0.0, 'min': 0.0, 'count': 0}
+            logger.error(f"지중배관 통계 조회 실패: {e}")
+            return {'t_in': empty, 't_out': empty, 'flow': empty}
+
+
+    def get_statistics_power(self, device_id: str, hours: int = 24) -> Dict:
+        
+        cache_key = f'stats_pw_{device_id}_{hours}'
+        cached = self._cache_get(cache_key)         
+        if cached is not None:                      
+            return cached                           
+        
+        empty = {'latest': 0.0, 'avg': 0.0, 'max': 0.0, 'min': 0.0, 'count': 0}
+        try:
+            start_time = datetime.now() - timedelta(hours=hours)
+
+            query = """
+                SELECT
+                    (SELECT total_energy FROM elec WHERE device_id = %s ORDER BY timestamp DESC LIMIT 1) AS latest,
+                    AVG(total_energy) AS avg,
+                    MAX(total_energy) AS max,
+                    MIN(total_energy) AS min,
+                    COUNT(*)          AS cnt
+                FROM elec
+                WHERE device_id = %s
+                AND timestamp >= %s
+            """
+            r = execute_query(query, (device_id, device_id, start_time), fetch_mode='one')
+            if not r:
+                return empty
+
+            result = {
+                'latest': round(float(r['latest']), 2) if r['latest'] is not None else 0.0,
+                'avg':    round(float(r['avg']),    2) if r['avg']    is not None else 0.0,
+                'max':    round(float(r['max']),    2) if r['max']    is not None else 0.0,
+                'min':    round(float(r['min']),    2) if r['min']    is not None else 0.0,
+                'count':  int(r['cnt']) if r['cnt'] is not None else 0,
+            }
+            self._cache_set(cache_key, result)
+            return result
+        except Exception as e:
+            logger.error(f"전력량계 통계 조회 실패: {e}")
+            return empty
 
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

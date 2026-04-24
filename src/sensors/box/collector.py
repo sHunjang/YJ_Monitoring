@@ -8,7 +8,7 @@ from datetime import datetime
 
 from services.config_service import ConfigService
 from sensors.box.reader import BoxSensorReader
-from core.database import insert_heatpump_data, insert_groundpipe_data
+from core.database import insert_heatpump_batch, insert_groundpipe_batch
 
 logger = logging.getLogger(__name__)
 
@@ -63,19 +63,13 @@ class BoxSensorCollector:
     # ─────────────────────────────────────────
     # 단일 장치 수집 (워커 스레드에서 실행)
     # ─────────────────────────────────────────
-    def _collect_heatpump_worker(
-        self, device_id: str,
-        power_meter_data: Optional[Dict[str, float]] = None
-    ) -> dict:
-        """히트펌프 단일 장치 수집 (스레드 워커)"""
+    def _read_heatpump_sensor(self, device_id: str,
+                                power_meter_data=None) -> dict:
+        """센서 읽기만 수행 (DB 저장 없음)"""
         try:
             device_config = self.config_service.get_device_config(device_id)
-            if not device_config:
-                logger.error(f"[{device_id}] 설정 없음")
-                return {'success': False, 'flow': None}
-            if not device_config.get('enabled', True):
-                logger.debug(f"[{device_id}] 비활성화")
-                return {'success': False, 'flow': None}
+            if not device_config or not device_config.get('enabled', True):
+                return None
 
             ip      = device_config.get('ip')
             port    = device_config.get('port', 502)
@@ -86,174 +80,151 @@ class BoxSensorCollector:
                 sensors.get('temp2_slave_id', 2),
                 sensors.get('flow_slave_id', 3)
             )
-
-            sensor_data = reader.read_all_sensors()
-            if not sensor_data:
-                logger.error(f"[{device_id}] 센서 읽기 실패")
-                return {'success': False, 'flow': None}
-
-            energy  = power_meter_data.get(device_id) if power_meter_data else None
-            success = insert_heatpump_data(
-                device_id=device_id,
-                input_temp=sensor_data.get('input_temp'),
-                output_temp=sensor_data.get('output_temp'),
-                flow=sensor_data.get('flow'),
-                energy=energy,
-                timestamp=datetime.now()
-            )
-            if success:
-                logger.info(
-                    f"[{device_id}] 저장 완료 "
-                    f"T_in={sensor_data.get('input_temp')}°C "
-                    f"T_out={sensor_data.get('output_temp')}°C "
-                    f"Flow={sensor_data.get('flow')}L "
-                    f"Energy={energy}kWh"
-                )
-                return {'success': True, 'flow': sensor_data.get('flow')}
-            else:
-                logger.error(f"[{device_id}] DB 저장 실패")
-                return {'success': False, 'flow': None}
+            return reader.read_all_sensors()  # {'input_temp', 'output_temp', 'flow'}
 
         except Exception as e:
-            logger.error(f"[{device_id}] 수집 오류: {e}", exc_info=True)
-            return {'success': False, 'flow': None}
-
-    def _collect_groundpipe_worker(self, device_id: str) -> dict:
-        """지중배관 단일 장치 수집 (스레드 워커)"""
-        try:
-            device_config = self.config_service.get_device_config(device_id)
-            if not device_config:
-                logger.error(f"[{device_id}] 설정 없음")
-                return {'success': False, 'flow': None}
-            if not device_config.get('enabled', True):
-                logger.debug(f"[{device_id}] 비활성화")
-                return {'success': False, 'flow': None}
-
-            ip      = device_config.get('ip')
-            port    = device_config.get('port', 502)
-            sensors = device_config.get('sensors', {})
-            reader  = self._get_or_create_reader(
-                device_id, ip, port,
-                sensors.get('temp1_slave_id', 1),
-                sensors.get('temp2_slave_id', 2),
-                sensors.get('flow_slave_id', 3)
-            )
-
-            sensor_data = reader.read_all_sensors()
-            if not sensor_data:
-                logger.error(f"[{device_id}] 센서 읽기 실패")
-                return {'success': False, 'flow': None}
-
-            success = insert_groundpipe_data(
-                device_id=device_id,
-                input_temp=sensor_data.get('input_temp'),
-                output_temp=sensor_data.get('output_temp'),
-                flow=sensor_data.get('flow'),
-                timestamp=datetime.now()
-            )
-            if success:
-                logger.info(f"[{device_id}] 저장 완료")
-                return {'success': True, 'flow': sensor_data.get('flow')}
-            else:
-                logger.error(f"[{device_id}] DB 저장 실패")
-                return {'success': False, 'flow': None}
-
-        except Exception as e:
-            logger.error(f"[{device_id}] 수집 오류: {e}", exc_info=True)
-            return {'success': False, 'flow': None}
+            logger.error(f"[{device_id}] 센서 읽기 오류: {e}", exc_info=True)
+            return None
 
     # ─────────────────────────────────────────
     # 전체 병렬 수집
     # ─────────────────────────────────────────
-    def collect_all_heatpumps(
-        self, power_meter_data: Optional[Dict] = None
-    ) -> Dict[str, dict]:
+    def collect_all_heatpumps(self, power_meter_data=None):
         heatpumps = self.config_service.get_heatpump_ips()
         logger.info(f"히트펌프 {len(heatpumps)}개 병렬 수집 시작")
 
-        results = {}
+        # 병렬로 센서 읽기만 수행
         futures = {}
-
         for hp in heatpumps:
             device_id = hp.get('device_id')
-            if not device_id:
-                continue
-            future = self._executor.submit(
-                self._collect_heatpump_worker,
-                device_id, power_meter_data
-            )
-            futures[future] = device_id
+            if device_id:
+                future = self._executor.submit(
+                    self._read_heatpump_sensor, device_id, power_meter_data
+                )
+                futures[future] = device_id
 
+        # 결과 수집
+        sensor_results = {}
         for future in as_completed(futures, timeout=DEVICE_COLLECT_TIMEOUT + 2):
             device_id = futures[future]
             try:
-                results[device_id] = future.result(
-                    timeout=DEVICE_COLLECT_TIMEOUT
-                )
-            except TimeoutError:
-                logger.error(f"[{device_id}] 수집 타임아웃")
-                results[device_id] = {'success': False, 'flow': None}
+                sensor_results[device_id] = future.result(timeout=DEVICE_COLLECT_TIMEOUT)
             except Exception as e:
                 logger.error(f"[{device_id}] future 오류: {e}")
+                sensor_results[device_id] = None
+
+        # 배치 INSERT (한 트랜잭션)
+        batch = []
+        results = {}
+        now = datetime.now()
+
+        for device_id, data in sensor_results.items():
+            if data:
+                energy = power_meter_data.get(device_id) if power_meter_data else None
+                batch.append({
+                    'device_id':   device_id,
+                    'input_temp':  data.get('input_temp'),
+                    'output_temp': data.get('output_temp'),
+                    'flow':        data.get('flow'),
+                    'energy':      energy,
+                    'timestamp':   now,
+                })
+                results[device_id] = {'success': True, 'flow': data.get('flow')}
+                logger.info(
+                    f"[{device_id}] 수집 완료 "
+                    f"T_in={data.get('input_temp')}°C "
+                    f"T_out={data.get('output_temp')}°C "
+                    f"Flow={data.get('flow')}L"
+                )
+            else:
                 results[device_id] = {'success': False, 'flow': None}
 
-        # 타임아웃으로 결과 없는 장치 처리
+        if batch:
+            insert_heatpump_batch(batch)
+
+        # 타임아웃으로 결과 없는 장치
         for hp in heatpumps:
             device_id = hp.get('device_id')
             if device_id and device_id not in results:
-                logger.error(f"[{device_id}] 결과 없음 (전체 타임아웃)")
                 results[device_id] = {'success': False, 'flow': None}
 
-        success_count = sum(
-            1 for v in results.values() if v.get('success')
-        )
-        logger.info(
-            f"히트펌프 수집 완료: {success_count}/{len(heatpumps)}개 성공"
-        )
+        success_count = sum(1 for v in results.values() if v.get('success'))
+        logger.info(f"히트펌프 수집 완료: {success_count}/{len(heatpumps)}개 성공")
         return results
 
-    def collect_all_groundpipes(self) -> Dict[str, dict]:
+    def collect_all_groundpipes(self):
         groundpipes = self.config_service.get_groundpipe_ips()
         logger.info(f"지중배관 {len(groundpipes)}개 병렬 수집 시작")
 
-        results = {}
         futures = {}
-
         for gp in groundpipes:
             device_id = gp.get('device_id')
-            if not device_id:
-                continue
-            future = self._executor.submit(
-                self._collect_groundpipe_worker, device_id
-            )
-            futures[future] = device_id
+            if device_id:
+                future = self._executor.submit(
+                    self._read_groundpipe_sensor, device_id
+                )
+                futures[future] = device_id
 
+        sensor_results = {}
         for future in as_completed(futures, timeout=DEVICE_COLLECT_TIMEOUT + 2):
             device_id = futures[future]
             try:
-                results[device_id] = future.result(
-                    timeout=DEVICE_COLLECT_TIMEOUT
-                )
-            except TimeoutError:
-                logger.error(f"[{device_id}] 수집 타임아웃")
-                results[device_id] = {'success': False, 'flow': None}
+                sensor_results[device_id] = future.result(timeout=DEVICE_COLLECT_TIMEOUT)
             except Exception as e:
                 logger.error(f"[{device_id}] future 오류: {e}")
+                sensor_results[device_id] = None
+
+        batch = []
+        results = {}
+        now = datetime.now()
+
+        for device_id, data in sensor_results.items():
+            if data:
+                batch.append({
+                    'device_id':   device_id,
+                    'input_temp':  data.get('input_temp'),
+                    'output_temp': data.get('output_temp'),
+                    'flow':        data.get('flow'),
+                    'timestamp':   now,
+                })
+                results[device_id] = {'success': True, 'flow': data.get('flow')}
+                logger.info(f"[{device_id}] 수집 완료")
+            else:
                 results[device_id] = {'success': False, 'flow': None}
+
+        if batch:
+            insert_groundpipe_batch(batch)
 
         for gp in groundpipes:
             device_id = gp.get('device_id')
             if device_id and device_id not in results:
-                logger.error(f"[{device_id}] 결과 없음 (전체 타임아웃)")
                 results[device_id] = {'success': False, 'flow': None}
 
-        success_count = sum(
-            1 for v in results.values() if v.get('success')
-        )
-        logger.info(
-            f"지중배관 수집 완료: {success_count}/{len(groundpipes)}개 성공"
-        )
+        success_count = sum(1 for v in results.values() if v.get('success'))
+        logger.info(f"지중배관 수집 완료: {success_count}/{len(groundpipes)}개 성공")
         return results
+
+    def _read_groundpipe_sensor(self, device_id: str) -> dict:
+        """센서 읽기만 수행 (DB 저장 없음)"""
+        try:
+            device_config = self.config_service.get_device_config(device_id)
+            if not device_config or not device_config.get('enabled', True):
+                return None
+
+            ip      = device_config.get('ip')
+            port    = device_config.get('port', 502)
+            sensors = device_config.get('sensors', {})
+            reader  = self._get_or_create_reader(
+                device_id, ip, port,
+                sensors.get('temp1_slave_id', 1),
+                sensors.get('temp2_slave_id', 2),
+                sensors.get('flow_slave_id', 3)
+            )
+            return reader.read_all_sensors()
+
+        except Exception as e:
+            logger.error(f"[{device_id}] 센서 읽기 오류: {e}", exc_info=True)
+            return None
 
     def collect_all(self, power_meter_data=None) -> dict:
         """

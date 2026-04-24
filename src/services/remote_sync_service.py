@@ -29,7 +29,7 @@ from core.database import (
 logger = logging.getLogger(__name__)
 
 MAX_RETRY    = 20    # 최대 재시도 횟수 초과 시 폐기
-SYNC_INTERVAL = 30  # 재전송 주기 (초)
+SYNC_INTERVAL = 15  # 재전송 주기 (초)
 
 # 테이블별 INSERT 쿼리
 REMOTE_QUERIES = {
@@ -143,7 +143,7 @@ class RemoteSyncService:
         logger.info("외부 DB 재전송 루프 종료")
 
     def _process_queue(self):
-        """큐 항목 순서대로 재전송 처리"""
+        """큐 항목 배치로 재전송 처리"""
         items = get_queue_items(limit=50)
         if not items:
             return
@@ -153,53 +153,94 @@ class RemoteSyncService:
             logger.warning("외부 DB 연결 불가 — 재전송 다음 주기로 연기")
             return
 
-        success_count = 0
-        fail_count = 0
-
+        # ── 최대 재시도 초과 항목 먼저 폐기 ──────────
+        discard_ids = []
+        send_items  = []
         for item in items:
-            # 최대 재시도 초과 시 폐기
             if item['retry_count'] >= MAX_RETRY:
                 logger.error(
                     f"큐 항목 폐기 (최대 재시도 초과): "
                     f"id={item['id']}, table={item['table_name']}, "
                     f"created_at={item['created_at']}"
                 )
-                delete_queue_item(item['id'])
+                discard_ids.append(item['id'])
+            else:
+                send_items.append(item)
+
+        for item_id in discard_ids:
+            delete_queue_item(item_id)
+
+        if not send_items:
+            return
+
+        # ── 테이블별로 묶어서 배치 전송 ───────────────
+        from collections import defaultdict
+        grouped = defaultdict(list)  # {table_name: [item, ...]}
+        for item in send_items:
+            grouped[item['table_name']].append(item)
+
+        success_ids = []
+        fail_ids    = []
+
+        for table_name, group in grouped.items():
+            query = REMOTE_QUERIES.get(table_name)
+            if query is None:
+                logger.error(f"알 수 없는 테이블명: {table_name}")
+                for item in group:
+                    fail_ids.append(item['id'])
                 continue
 
-            success = self._send_one(conn, item)
-            if success:
-                delete_queue_item(item['id'])
-                success_count += 1
-            else:
-                update_queue_retry(item['id'])
-                fail_count += 1
-                # 연속 실패 시 이번 주기 중단
-                break
+            # 파라미터 파싱
+            batch_params = []
+            batch_ids    = []
+            for item in group:
+                params = self._parse_params(item)
+                if params is not None:
+                    batch_params.append(params)
+                    batch_ids.append(item['id'])
+                else:
+                    fail_ids.append(item['id'])
 
-        if success_count > 0 or fail_count > 0:
+            if not batch_params:
+                continue
+
+            # executemany로 배치 전송
+            try:
+                cursor = conn.cursor()
+                cursor.executemany(query, batch_params)
+                conn.commit()
+                cursor.close()
+                success_ids.extend(batch_ids)
+                logger.debug(f"[{table_name}] 배치 전송 성공: {len(batch_ids)}건")
+
+            except Exception as e:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                logger.warning(f"[{table_name}] 배치 전송 실패: {e}")
+                self._remote_conn = None
+                fail_ids.extend(batch_ids)
+
+        # ── 결과 반영 ──────────────────────────────────
+        for item_id in success_ids:
+            delete_queue_item(item_id)
+
+        for item_id in fail_ids:
+            update_queue_retry(item_id)
+
+        if success_ids or fail_ids:
             logger.info(
-                f"재전송 완료 — 성공: {success_count}건, 실패: {fail_count}건"
+                f"재전송 완료 — 성공: {len(success_ids)}건, "
+                f"실패: {len(fail_ids)}건"
             )
 
-    def _send_one(self, conn, item: dict) -> bool:
-        """큐 항목 1건을 외부 DB에 전송"""
-        table_name = item['table_name']
-        query = REMOTE_QUERIES.get(table_name)
-
-        if query is None:
-            logger.error(f"알 수 없는 테이블명: {table_name}")
-            return False
-
+    def _parse_params(self, item: dict):
+        """큐 항목의 payload를 파라미터 튜플로 변환"""
         try:
-            # payload 역직렬화
             raw = item['payload']
-            if isinstance(raw, str):
-                params_list = json.loads(raw)
-            else:
-                params_list = list(raw)  # psycopg2가 dict로 줄 수도 있음
+            params_list = json.loads(raw) if isinstance(raw, str) else list(raw)
 
-            # datetime 문자열 복원
             params = []
             for v in params_list:
                 if isinstance(v, str):
@@ -209,18 +250,8 @@ class RemoteSyncService:
                         params.append(v)
                 else:
                     params.append(v)
-
-            cursor = conn.cursor()
-            cursor.execute(query, params)
-            conn.commit()
-            cursor.close()
-            return True
+            return tuple(params)
 
         except Exception as e:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            logger.warning(f"재전송 실패 (id={item['id']}): {e}")
-            self._remote_conn = None  # 연결 초기화
-            return False
+            logger.error(f"payload 파싱 실패 (id={item['id']}): {e}")
+            return None
