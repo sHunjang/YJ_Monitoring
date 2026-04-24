@@ -132,7 +132,7 @@ class AlarmItemCard(QFrame):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('여주 센서 모니터링 시스템 v1.1.0')
+        self.setWindowTitle('여주 센서 모니터링 시스템 v2.0')
         self.setMinimumSize(1400, 900)
 
         self.data_service = UIDataService()
@@ -1239,7 +1239,7 @@ class MainWindow(QMainWindow):
     def show_about(self):
         QMessageBox.about(self, '프로그램 정보',
             '<h2>여주 센서 모니터링 시스템</h2>'
-            '<p>버전: 1.1.0</p><p>개발: Soluwins</p>'
+            '<p>버전: 2.0</p><p>개발: Soluwins</p>'
             '<p>히트펌프, 지중배관, 전력량계 실시간 모니터링</p>')
 
     def closeEvent(self, event):
