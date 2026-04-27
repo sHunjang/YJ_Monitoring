@@ -40,7 +40,7 @@ class Theme:
     # 센서 타입별 색상
     POWER_COLOR = '#1976d2'     # 전력 (파란색)
     HEATPUMP_COLOR = '#388e3c'  # 히트펌프 (초록색)
-    PIPE_COLOR = '#f57c00'      # 지중배관 (주황색)
+    PIPE_COLOR = '#388e3c'      # 지중배관 (주황색)
     
     # 차트 색상
     CHART_LINE = '#1976d2'      # 차트 선

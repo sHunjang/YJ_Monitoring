@@ -13,8 +13,8 @@ from core.database import insert_heatpump_batch, insert_groundpipe_batch
 logger = logging.getLogger(__name__)
 
 # 장치별 수집 타임아웃 (초)
-# 연결 타임아웃 2초 × 센서 3개 + 여유 2초
-DEVICE_COLLECT_TIMEOUT = 10
+# 연결 타임아웃 2초 × 3회 재시도 × 3개 센서 + 여유 5초 = 23초
+DEVICE_COLLECT_TIMEOUT = 25
 # 병렬 수집 워커 수
 MAX_WORKERS = 8
 
@@ -104,14 +104,24 @@ class BoxSensorCollector:
                 futures[future] = device_id
 
         # 결과 수집
+        # collect_all_groundpipes() 수정
         sensor_results = {}
-        for future in as_completed(futures, timeout=DEVICE_COLLECT_TIMEOUT + 2):
-            device_id = futures[future]
-            try:
-                sensor_results[device_id] = future.result(timeout=DEVICE_COLLECT_TIMEOUT)
-            except Exception as e:
-                logger.error(f"[{device_id}] future 오류: {e}")
-                sensor_results[device_id] = None
+        total_timeout = DEVICE_COLLECT_TIMEOUT * len(futures) / MAX_WORKERS + 5
+
+        try:
+            for future in as_completed(futures, timeout=total_timeout):
+                device_id = futures[future]
+                try:
+                    sensor_results[device_id] = future.result(timeout=DEVICE_COLLECT_TIMEOUT)
+                except Exception as e:
+                    logger.error(f"[{device_id}] future 오류: {e}")
+                    sensor_results[device_id] = None
+        except TimeoutError:
+            # 타임아웃 발생 시 완료된 것만 사용, 나머지는 실패 처리
+            logger.warning(f"히트펌프 수집 타임아웃 — 완료된 {len(sensor_results)}개만 저장")
+            for future, device_id in futures.items():
+                if device_id not in sensor_results:
+                    sensor_results[device_id] = None
 
         # 배치 INSERT (한 트랜잭션)
         batch = []
@@ -166,13 +176,22 @@ class BoxSensorCollector:
                 futures[future] = device_id
 
         sensor_results = {}
-        for future in as_completed(futures, timeout=DEVICE_COLLECT_TIMEOUT + 2):
-            device_id = futures[future]
-            try:
-                sensor_results[device_id] = future.result(timeout=DEVICE_COLLECT_TIMEOUT)
-            except Exception as e:
-                logger.error(f"[{device_id}] future 오류: {e}")
-                sensor_results[device_id] = None
+        total_timeout = DEVICE_COLLECT_TIMEOUT * len(futures) / MAX_WORKERS + 5
+
+        try:
+            for future in as_completed(futures, timeout=total_timeout):
+                device_id = futures[future]
+                try:
+                    sensor_results[device_id] = future.result(timeout=DEVICE_COLLECT_TIMEOUT)
+                except Exception as e:
+                    logger.error(f"[{device_id}] future 오류: {e}")
+                    sensor_results[device_id] = None
+        except TimeoutError:
+            # 타임아웃 발생 시 완료된 것만 사용, 나머지는 실패 처리
+            logger.warning(f"지중배관 수집 타임아웃 — 완료된 {len(sensor_results)}개만 저장")
+            for future, device_id in futures.items():
+                if device_id not in sensor_results:
+                    sensor_results[device_id] = None
 
         batch = []
         results = {}
@@ -241,9 +260,14 @@ class BoxSensorCollector:
             self.collect_all_groundpipes
         )
 
+        # 내부에서 total_timeout = 25 × 10 / 8 + 5 = 36.25초
+        # 외부가 50초라 충분하긴 한데, 더 명확하게 장치 수 기반으로
+        hp_count = len(self.config_service.get_heatpump_ips())
+        gp_count = len(self.config_service.get_groundpipe_ips())
+
         try:
             hp_results = hp_future.result(
-                timeout=DEVICE_COLLECT_TIMEOUT + 5
+                timeout=DEVICE_COLLECT_TIMEOUT * hp_count / MAX_WORKERS + 10 
             )
         except Exception as e:
             logger.error(f"히트펌프 전체 수집 오류: {e}")
@@ -251,7 +275,7 @@ class BoxSensorCollector:
 
         try:
             gp_results = gp_future.result(
-                timeout=DEVICE_COLLECT_TIMEOUT + 5
+                timeout=DEVICE_COLLECT_TIMEOUT * gp_count / MAX_WORKERS + 10
             )
         except Exception as e:
             logger.error(f"지중배관 전체 수집 오류: {e}")

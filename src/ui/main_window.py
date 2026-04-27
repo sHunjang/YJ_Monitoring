@@ -408,8 +408,8 @@ class MainWindow(QMainWindow):
         dp_layout.addWidget(dp_title)
 
         self.device_table = QTableWidget()
-        self.device_table.setColumnCount(5)
-        self.device_table.setHorizontalHeaderLabels(['장치 ID', '타입', '장치명', '상태', '최신값'])
+        self.device_table.setColumnCount(4)
+        self.device_table.setHorizontalHeaderLabels(['타입', '장치명', '상태', '최신값'])
         self.device_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.device_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.device_table.setAlternatingRowColors(True)
@@ -448,7 +448,6 @@ class MainWindow(QMainWindow):
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         dp_layout.addWidget(self.device_table)
         right_col.addWidget(device_panel, stretch=1)
 
@@ -759,15 +758,6 @@ class MainWindow(QMainWindow):
 
     def _on_power_period_changed(self, minutes: int):
         self.on_power_device_changed(self.power_device_combo.currentText())
-
-    def _on_power_period_changed(self, minutes: int):
-        hours = self.power_chart.current_time_range
-        power_devices = self.data_service.get_all_power_devices()
-        self.power_chart.clear()
-        for device_id in power_devices[:4]:
-            data = self.data_service.get_timeseries_power(device_id, hours=hours)
-            if data:
-                self.power_chart.add_line(device_id, data, name=f'{device_id} 전력량')
 
     # ─────────────────────────────────────────
     # 데이터 갱신
@@ -1110,7 +1100,6 @@ class MainWindow(QMainWindow):
             self.device_table.setItem(r, 1, type_item)
             self.device_table.setItem(r, 2, QTableWidgetItem(status))
             self.device_table.setItem(r, 3, QTableWidgetItem(val))
-            self.device_table.setItem(r, 4, QTableWidgetItem('-'))
         self.device_table.resizeRowsToContents()
 
     # ─────────────────────────────────────────
