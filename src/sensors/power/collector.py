@@ -23,46 +23,26 @@ from typing import Dict, Any
 
 from sensors.power.reader import PowerMeterReader
 from sensors.power.models import PowerMeterData
-from core.database import insert_power_meter_data
+from core.database import insert_power_meter_batch
 
 logger = logging.getLogger(__name__)
 
 
 class PowerMeterCollector:
-    """전력량계 데이터 수집기"""
-    
+
     def __init__(self, config_file: str = 'config/power_meter_config.json'):
-        """
-        초기화
-        
-        Args:
-            config_file: 설정 파일 경로
-        """
-        # Reader 초기화
         self.reader = PowerMeterReader(config_file)
-        
         logger.info(
             f"PowerMeterReader 초기화: {self.reader.ip}:{self.reader.port}, "
             f"{len(self.reader.meter_configs)}개"
         )
         logger.info("PowerMeterCollector 초기화 완료")
-    
+
     def collect_all(self) -> Dict[str, Any]:
-        """
-        모든 전력량계 데이터 수집 및 DB 저장
-        
-        Returns:
-            dict: {
-                'success_count': 성공 개수,
-                'total_count': 전체 개수,
-                'data': [PowerMeterData, ...],
-                'errors': [error_messages, ...]
-            }
-        """
         logger.info("=" * 70)
         logger.info("전력량계 데이터 수집 시작")
         logger.info("=" * 70)
-        
+
         start_time = datetime.now()
         results = {
             'success_count': 0,
@@ -70,12 +50,10 @@ class PowerMeterCollector:
             'data': [],
             'errors': []
         }
-        
+
         try:
-            # 데이터 읽기
             read_result = self.reader.read_all_meters()
-            
-            # read_result가 딕셔너리인 경우 처리
+
             if isinstance(read_result, dict):
                 data_list = []
                 for device_id, data in read_result.items():
@@ -88,40 +66,34 @@ class PowerMeterCollector:
             else:
                 logger.error(f"예상치 못한 데이터 형식: {type(read_result)}")
                 data_list = []
-            
+
             results['total_count'] = len(data_list)
-            
-            # DB 저장
+
+            # ── 배치 저장 + 원격 DB 전송 ──────────────
+            batch = []
             for data in data_list:
-                try:
-                    if not isinstance(data, PowerMeterData):
-                        logger.warning(f"PowerMeterData 객체가 아님: {type(data)}")
-                        continue
-                    
-                    # 데이터 저장
-                    success = insert_power_meter_data(
-                        device_id=data.device_id,
-                        total_energy=data.total_energy,
-                        timestamp=data.timestamp
-                    )
-                    
-                    if success:
-                        results['success_count'] += 1
-                        results['data'].append(data)
-                        logger.debug(f"[{data.device_id}] 데이터 저장 성공: {data.total_energy}kWh")
-                    else:
-                        error_msg = f"[{data.device_id}] 데이터 저장 실패"
-                        results['errors'].append(error_msg)
-                        logger.error(error_msg)
-                
-                except Exception as e:
-                    device_id = getattr(data, 'device_id', 'UNKNOWN')
-                    error_msg = f"[{device_id}] 데이터 저장 오류: {e}"
+                if not isinstance(data, PowerMeterData):
+                    logger.warning(f"PowerMeterData 객체가 아님: {type(data)}")
+                    continue
+                batch.append({
+                    'device_id':    data.device_id,
+                    'total_energy': data.total_energy,
+                    'timestamp':    data.timestamp,
+                })
+                results['data'].append(data)
+
+            if batch:
+                success = insert_power_meter_batch(batch)
+                if success:
+                    results['success_count'] = len(batch)
+                    logger.debug(f"전력량계 배치 저장 완료: {len(batch)}건")
+                else:
+                    error_msg = "전력량계 배치 저장 실패"
                     results['errors'].append(error_msg)
-                    logger.error(error_msg, exc_info=True)
-            
+                    logger.error(error_msg)
+
             elapsed = (datetime.now() - start_time).total_seconds()
-            
+
             logger.info("=" * 70)
             logger.info(
                 f"전력량계 데이터 수집 완료: "
@@ -129,11 +101,11 @@ class PowerMeterCollector:
                 f"소요 시간: {elapsed:.2f}초"
             )
             logger.info("=" * 70)
-        
+
         except Exception as e:
             logger.error(f"전력량계 데이터 수집 오류: {e}", exc_info=True)
             results['errors'].append(str(e))
-        
+
         return results
 
 

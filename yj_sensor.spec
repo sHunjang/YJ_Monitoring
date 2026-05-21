@@ -97,13 +97,13 @@ datas.append(('config', 'config'))
 # sql 폴더
 datas.append(('sql', 'sql'))
 
-# PyQtGraph 데이터 파일 포함 (차트 필수)
+# jaraco.text 누락 파일 추가 ← 이 부분 추가
 try:
-    import pyqtgraph
-    pg_datas, pg_binaries, pg_hiddenimports = collect_all('pyqtgraph')
-    datas += pg_datas
-    hiddenimports += pg_hiddenimports
-except:
+    import jaraco.text
+    import os
+    jaraco_text_dir = os.path.dirname(jaraco.text.__file__)
+    datas.append((os.path.join(jaraco_text_dir, 'Lorem ipsum.txt'), 'jaraco/text'))
+except Exception:
     pass
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

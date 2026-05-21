@@ -29,7 +29,7 @@ sys.path.insert(0, str(project_root / 'src'))
 
 from core.config import get_config
 from core.logging_config import setup_logging
-from core.database import initialize_connection_pool, close_connection_pool, test_db_connection
+from core.database import initialize_connection_pool, close_connection_pool, test_db_connection, initialize_remote_connection_pool
 from services.data_collection_service import DataCollectionService
 
 logger = logging.getLogger(__name__)
@@ -107,6 +107,7 @@ def run_console_mode():
     
     try:
         initialize_connection_pool()
+        initialize_remote_connection_pool()
         
         if not test_db_connection():
             logger.error("✗ 데이터베이스 연결 실패")
@@ -186,6 +187,7 @@ def run_gui_mode():
     # 데이터베이스 연결
     try:
         initialize_connection_pool()
+        initialize_remote_connection_pool()
         
         if not test_db_connection():
             print("✗ 데이터베이스 연결 실패")

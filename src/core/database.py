@@ -278,6 +278,11 @@ def insert_heatpump_batch(records: list) -> bool:
             conn.commit()
             cursor.close()
             logger.debug(f"히트펌프 배치 저장 완료: {len(records)}건")
+            
+            # 원격 DB 전송
+            for p in params:
+                _insert_remote('heatpump', query, p)
+            
             return True
     except Exception as e:
         logger.error(f"히트펌프 배치 저장 실패: {e}", exc_info=True)
@@ -424,6 +429,10 @@ def insert_groundpipe_batch(records: list) -> bool:
             conn.commit()
             cursor.close()
             logger.debug(f"지중배관 배치 저장 완료: {len(records)}건")
+            
+            for p in params:
+                _insert_remote('groundpipe', query, p)
+            
             return True
     except Exception as e:
         logger.error(f"지중배관 배치 저장 실패: {e}", exc_info=True)
@@ -554,6 +563,10 @@ def insert_power_meter_batch(records: list) -> bool:
             conn.commit()
             cursor.close()
             logger.debug(f"전력량계 배치 저장 완료: {len(records)}건")
+            
+            for p in params:
+                _insert_remote('elec', query, p)
+            
             return True
     except Exception as e:
         logger.error(f"전력량계 배치 저장 실패: {e}", exc_info=True)
@@ -712,6 +725,28 @@ def _insert_remote(table_name: str, query: str, params: tuple):
                 _remote_connection_pool.putconn(conn)
             except Exception:
                 pass
+
+def initialize_remote_connection_pool():
+    """원격 DB 연결 풀 초기화"""
+    global _remote_connection_pool
+    config = get_config()
+    if not config.db_remote_enabled:
+        return
+    try:
+        _remote_connection_pool = psycopg2.pool.ThreadedConnectionPool(
+            minconn=1,
+            maxconn=5,
+            host=config.db_remote_host,
+            port=config.db_remote_port,
+            database=config.db_remote_name,
+            user=config.db_remote_user,
+            password=config.db_remote_password,
+            connect_timeout=5
+        )
+        logger.info("✓ 원격 DB 연결 풀 초기화 완료")
+    except Exception as e:
+        logger.warning(f"원격 DB 연결 풀 초기화 실패: {e}")
+        _remote_connection_pool = None
 
 
 def _enqueue_failed(table_name: str, params: tuple):
